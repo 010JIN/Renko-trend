@@ -1,0 +1,53 @@
+# 数据处理
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 交易所接口
+ccxt>=4.0.0
+websocket-client>=1.6.0
+
+# 技术指标
+ta-lib
+# 如果ta-lib安装困难，可以使用以下替代：
+# pandas-ta>=0.3.14
+
+# 可视化
+matplotlib>=3.7.0
+plotly>=5.17.0
+seaborn>=0.12.0
+
+# 数据存储
+pyarrow>=12.0.0
+
+# 配置管理
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 日志
+loguru>=0.7.0
+
+# 实用工具
+requests>=2.31.0
+python-dateutil>=2.8.0
+
+# 回测
+backtrader>=1.9.78
+# 或使用
+# vectorbt>=0.25.0
+
+# 机器学习（可选，用于参数优化）
+scikit-learn>=1.3.0
+optuna>=3.3.0
+
+# Jupyter
+jupyter>=1.0.0
+ipywidgets>=8.1.0
+
+# 测试
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# 代码质量
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0

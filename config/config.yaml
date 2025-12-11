@@ -1,0 +1,144 @@
+
+# 数据源配置
+data:
+  exchange: binance
+  symbol: BTCUSDT
+  timeframe: 5m
+  testnet: false
+  agg_interval: 5m  # 新增：K线聚合周期，可选 1m/5m/15m/30m/1h
+
+# 砖型图配置
+renko:
+  # 砖块大小计算方法: fixed | atr | percentage | log_percentage
+  method: atr 
+
+  # 固定法参数
+  brick_size: 100.0  # 固定砖块大小
+
+  # ATR法参数
+  atr_period: 14
+  atr_multiplier: 2.0
+
+  # 百分比法参数
+  percentage: 0.005  # 0.5%
+
+  # 对数百分比法参数（适合长期走势分析）
+  log_base: 10.0  # 对数底数，默认10
+
+  # 其他选项
+  use_wicks: false  # 是否使用影线（高低价）
+
+# 趋势过滤配置
+trend_filter:
+  # 最小连续砖块数
+  min_bricks: 3
+
+  # 趋势强度阈值 (0-1)
+
+  strength_threshold: 0.6
+
+  # 信号可信度阈值 (0-1)
+  confidence_threshold: 0.7
+
+  # 成交量过滤
+  use_volume_filter: true
+  volume_ma_period: 20
+
+  # 多周期分析
+  multi_timeframe:
+    enabled: true
+    timeframes: [5m, 15m, 1h]
+    weights: [0.3, 0.3, 0.4]  # 权重总和=1
+
+# 策略配置
+strategy:
+  name: renko_trend
+
+  # 入场条件
+  entry:
+    min_confirmation_bricks: 2  # 入场确认砖块数
+    require_volume_surge: true  # 要求成交量放大
+    volume_surge_ratio: 1.2     # 成交量放大倍数
+    check_breakout: true        # 检查突破
+
+  # 止盈止损
+  exit:
+    take_profit_bricks: 5       # 止盈砖块数
+    stop_loss_bricks: 2         # 止损砖块数
+    trailing_stop: true         # 移动止损
+    trailing_distance_bricks: 1 # 移动止损距离
+
+  # 其他过滤条件
+  filters:
+    min_trend_strength: 0.6     # 最小趋势强度
+    avoid_low_volatility: true  # 避免低波动期
+    min_atr_value: 50           # 最小ATR值
+
+# 风险管理
+risk:
+  # 仓位管理
+  max_position_size: 1000      # 最大持仓金额 (USDT)
+  position_sizing_method: fixed  # fixed | risk_based | kelly
+  risk_per_trade: 0.02         # 每笔交易风险比例
+
+  # 止损止盈
+  max_loss_per_trade: 50       # 单笔最大亏损 (USDT)
+  max_daily_loss: 200          # 每日最大亏损 (USDT)
+  max_daily_trades: 50         # 每日最大交易次数
+
+  # 风控开关
+  enable_max_drawdown_stop: true
+  max_drawdown_percent: 0.15   # 最大回撤停止 (15%)
+
+# 数据采集
+data_collection:
+  # 历史数据
+  historical:
+    days: 30                    # 回溯天数
+    save_path: data/raw
+
+  # 实时数据
+  realtime:
+    enabled: true
+    websocket: true
+    update_interval: 1          # 更新间隔（秒）
+    save_interval: 60           # 保存间隔（秒）
+
+# 回测配置
+backtest:
+  initial_capital: 10000
+  commission: 0.001             # 手续费率
+  slippage: 0.0005              # 滑点
+  start_date: "2024-12-11"
+  end_date: "2025-12-10"
+
+# 日志配置
+logging:
+  level: INFO                   # DEBUG | INFO | WARNING | ERROR
+  console: true
+  file: true
+  path: logs/app.log
+  max_size: 10485760            # 10MB
+  backup_count: 5
+
+# 通知配置
+notifications:
+  enabled: false
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+  email:
+    enabled: false
+    smtp_server: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    to_address: ""
+
+# 可视化配置
+visualization:
+  enabled: true
+  plot_type: interactive        # static | interactive
+  save_plots: true
+  plot_path: data/plots
