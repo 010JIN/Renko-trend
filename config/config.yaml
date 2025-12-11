@@ -3,27 +3,34 @@
 data:
   exchange: binance
   symbol: BTCUSDT
-  timeframe: 5m
+  interval: 1m  # 改为1分钟K线，提高响应速度
+  timeframe: 5m  # 保留用于兼容
   testnet: false
-  agg_interval: 5m  # 新增：K线聚合周期，可选 1m/5m/15m/30m/1h
+  agg_interval: 1m  # K线聚合周期（与interval保持一致）
 
 # 砖型图配置
 renko:
   # 砖块大小计算方法: fixed | atr | percentage | log_percentage
-  method: atr 
+  method: log_percentage  # 使用对数百分比法（简单且有效）
 
   # 固定法参数
   brick_size: 100.0  # 固定砖块大小
 
-  # ATR法参数
+  # ATR法参数（备用）
   atr_period: 14
   atr_multiplier: 2.0
 
   # 百分比法参数
   percentage: 0.005  # 0.5%
 
-  # 对数百分比法参数（适合长期走势分析）
-  log_base: 10.0  # 对数底数，默认10
+  # 对数百分比法参数 ⭐ 当前使用
+  # 公式: brick_size = log(price) / log(base) × percentage
+  # 对于BTC (90,000): log10(90000) × 0.35% ≈ 0.0173 (对数单位)
+  # 实际价格变化: 约 1.7% 或 1,500 USDT
+  log_base: 10.0  # 对数底数（10=常用对数，2.718=自然对数e）
+  # percentage: 0.0035  # 0.35% - BTC推荐起始值（可调整）
+  # percentage: 0.0045  # 0.45% - ETH推荐值
+  # percentage: 0.0065  # 0.65% - SOL等高波动币种
 
   # 其他选项
   use_wicks: false  # 是否使用影线（高低价）
