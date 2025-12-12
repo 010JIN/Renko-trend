@@ -72,6 +72,37 @@ class RenkoReversalStrategy:
        - 立刻反向开仓（全仓）
     3. 资金管理：每次使用全部可用保证金（无杠杆）
     """
+
+    def on_brick(self, brick) -> str:
+        """
+        推送一根砖块，自动检测趋势、开平仓，返回信号字符串（买/卖/平/无操作）
+        brick: 单根砖块（Series或dict）
+        """
+        # 兼容Series或dict
+        direction = brick['direction']
+        current_price = brick['brick_close']
+        timestamp = brick['timestamp']
+        # 维护最近两根方向
+        if not hasattr(self, '_recent_directions'):
+            self._recent_directions = []
+        self._recent_directions.append(direction)
+        if len(self._recent_directions) > 2:
+            self._recent_directions.pop(0)
+        # 检测趋势
+        trend = None
+        if len(self._recent_directions) == 2 and self._recent_directions[0] == self._recent_directions[1]:
+            trend = self._recent_directions[1]
+        signal = 'hold'
+        if trend is not None:
+            if not self.position.is_empty and self.position.direction != trend:
+                self.close_position(current_price, timestamp)
+                self.open_position(trend, current_price, timestamp)
+                signal = 'reverse'
+            elif self.position.is_empty:
+                self.open_position(trend, current_price, timestamp)
+                signal = 'open'
+        self.update_equity(current_price)
+        return signal
     
     def __init__(
         self,

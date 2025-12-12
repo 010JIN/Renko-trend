@@ -11,28 +11,8 @@ data:
 # 砖型图配置
 renko:
   # 砖块大小计算方法: fixed | atr | percentage | log_percentage
-  method: log_percentage  # 使用对数百分比法（简单且有效）
-
-  # 固定法参数
-  brick_size: 100.0  # 固定砖块大小
-
-  # ATR法参数（备用）
-  atr_period: 14
-  atr_multiplier: 2.0
-
-  # 百分比法参数
-  percentage: 0.005  # 0.5%
-
-  # 对数百分比法参数 ⭐ 当前使用
-  # 公式: brick_size = log(price) / log(base) × percentage
-  # 对于BTC (90,000): log10(90000) × 0.35% ≈ 0.0173 (对数单位)
-  # 实际价格变化: 约 1.7% 或 1,500 USDT
-  log_base: 10.0  # 对数底数（10=常用对数，2.718=自然对数e）
-  # percentage: 0.0035  # 0.35% - BTC推荐起始值（可调整）
-  # percentage: 0.0045  # 0.45% - ETH推荐值
-  # percentage: 0.0065  # 0.65% - SOL等高波动币种
-
-  # 其他选项
+  method: fixed  # 固定砖块方法
+  brick_size: 200.0  # 固定砖块大小
   use_wicks: false  # 是否使用影线（高低价）
 
 # 趋势过滤配置

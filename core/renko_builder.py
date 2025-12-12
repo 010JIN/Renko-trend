@@ -88,12 +88,12 @@ class RenkoBuilder:
 
         # 计算砖块大小
         brick_size = self._calculate_brick_size(df)
-        logger.info(f"计算得到砖块大小: {brick_size}")
+        # logger.info(f"计算得到砖块大小: {brick_size}")
 
         # 构建砖型图
         renko_bricks = self._build_bricks(df, brick_size)
 
-        logger.info(f"成功构建 {len(renko_bricks)} 个砖块")
+        # logger.info(f"成功构建 {len(renko_bricks)} 个砖块")
         return pd.DataFrame(renko_bricks)
 
     def _calculate_brick_size(self, df: pd.DataFrame) -> float:
@@ -112,11 +112,11 @@ class RenkoBuilder:
             return current_price * self.percentage
 
         elif self.method == 'log_percentage':
-            # 使用对数百分比：适合长期走势和宽幅价格变动
-            # brick_size = percentage * log(price) / log(base)
+            # 使用对数百分比：percentage表示价格变化百分比
+            # 实际砖块大小 = price * percentage
+            # 例如：BTC 90000 * 0.005 = 450 USDT (0.5%变化)
             current_price = df['close'].iloc[-1]
-            log_price = np.log(current_price) / np.log(self.log_base)
-            return self.percentage * log_price
+            return current_price * self.percentage
 
         else:
             raise ValueError(f"不支持的方法: {self.method}")

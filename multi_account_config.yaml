@@ -1,0 +1,23 @@
+# 多账户模拟交易配置示例
+accounts:
+  - name: account1_btc_5m_atr
+    symbol: BTCUSDT
+    fetch_interval: 5m
+    calc_interval: 5m
+    renko_method: atr
+    renko_params:
+      atr_period: 14
+      atr_multiplier: 2.0
+    initial_capital: 10000
+  - name: account2_eth_5m_atr
+    symbol: ETHUSDT
+    fetch_interval: 5m
+    calc_interval: 5m
+    renko_method: atr
+    renko_params:
+      atr_period: 14
+      atr_multiplier: 2.0
+    initial_capital: 10000
+  
+
+# 可继续添加更多账户配置

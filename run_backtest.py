@@ -1,6 +1,5 @@
 """
-运行砖型图反转策略回测
-使用真实历史数据进行策略测试
+真实模拟交易脚本 - 逐步推送K线数据，实时生成砖块并输出交易信号
 """
 
 import pandas as pd
@@ -8,6 +7,7 @@ import sys
 from pathlib import Path
 from loguru import logger
 import yaml
+import time
 
 sys.path.append(str(Path(__file__).parent))
 
@@ -15,66 +15,94 @@ from core.renko_builder import RenkoBuilder
 from strategies.renko_reversal_strategy import RenkoReversalStrategy
 
 
-def load_data(symbol: str = 'BTC_USDT', date: str = '20251211') -> pd.DataFrame:
-    """加载历史数据"""
+def load_data(symbol: str = 'BTCUSDT', interval: str = '1m') -> pd.DataFrame:
+    """加载历史数据用于模拟推送"""
     data_dir = Path('data/raw')
-    parquet_file = data_dir / f"{symbol}_5m_{date}.parquet"
-    
-    if not parquet_file.exists():
-        logger.error(f"数据文件不存在: {parquet_file}")
-        logger.info("请先运行: python fetch_real_data.py")
+    # 查找对应周期的csv文件
+    candidates = list(data_dir.glob(f"{symbol}_{interval}_*.csv"))
+    if not candidates:
+        logger.error(f"未找到 {symbol} {interval} 数据集 (csv)！请先运行: python fetch_real_data.py")
         sys.exit(1)
-    
-    df = pd.read_parquet(parquet_file)
-    logger.info(f"加载数据: {len(df):,} 条K线")
+    csv_file = sorted(candidates)[-1]
+    df = pd.read_csv(csv_file)
+    if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+    logger.info(f"加载数据: {len(df):,} 条 {interval} K线")
     logger.info(f"时间范围: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
     logger.info(f"价格范围: ${df['close'].min():,.2f} - ${df['close'].max():,.2f}")
-    
     return df
 
 
-def build_renko(df: pd.DataFrame, renko_cfg: dict) -> pd.DataFrame:
-    """构建砖型图，所有参数从 config.yaml 读取"""
-    method = renko_cfg.get('method', 'fixed')
-    logger.info(f"\n构建砖型图 (方法: {method})... 配置: {renko_cfg}")
+def simulate_live_trading(df: pd.DataFrame, renko_cfg: dict, initial_capital: float = 10000.0):
+    """
+    模拟实时交易：逐步推送K线，实时生成砖块并输出信号
+    """
     builder = RenkoBuilder(
-        method=method,
+        method=renko_cfg.get('method', 'fixed'),
         brick_size=renko_cfg.get('brick_size', 350.0),
         atr_period=renko_cfg.get('atr_period', 14),
         atr_multiplier=renko_cfg.get('atr_multiplier', 2.0),
-        percentage=renko_cfg.get('percentage', 0.005),
+        percentage=renko_cfg.get('percentage', 0.0035),
         log_base=renko_cfg.get('log_base', 10.0),
         use_wicks=renko_cfg.get('use_wicks', False)
     )
-    renko_df = builder.build(df)
-    logger.info(f"砖型图构建完成:")
-    logger.info(f"  原始K线: {len(df):,} 条")
-    logger.info(f"  砖块数量: {len(renko_df):,} 个")
-    logger.info(f"  压缩比: {len(df)/len(renko_df):.2f}:1")
-    logger.info(f"  平均砖块大小: ${renko_df['brick_size'].mean():.2f}")
-    return renko_df
-
-
-def run_strategy_backtest(
-    renko_df: pd.DataFrame,
-    initial_capital: float = 10000.0
-) -> dict:
-    """运行策略回测"""
     
-    # 创建策略实例
     strategy = RenkoReversalStrategy(
         initial_capital=initial_capital,
-        commission_rate=0.0004,  # 0.04% 手续费
-        slippage_rate=0.0001     # 0.01% 滑点
+        commission_rate=0.0004,
+        slippage_rate=0.0001
     )
     
-    # 运行回测
-    stats = strategy.run_backtest(renko_df)
+    buffer = []
+    last_brick_close = None
+    brick_count = 0
     
-    # 打印统计结果
+    logger.info("\n" + "="*70)
+    logger.info("🚀 开始模拟实时交易")
+    logger.info("="*70)
+    
+    for idx, row in df.iterrows():
+        buffer.append(row)
+        
+        if last_brick_close is None:
+            last_brick_close = row['open']
+        
+        buffer_df = pd.DataFrame(buffer).copy().reset_index(drop=True)
+        buffer_df.at[0, 'open'] = last_brick_close
+        
+        renko_df = builder.build(buffer_df)
+        
+        if not renko_df.empty:
+            brick = renko_df.iloc[0]
+            brick_count += 1
+            
+            # 推送信号到策略
+            signal = strategy.on_brick(brick)
+            
+            # 输出实时信号
+            direction_symbol = "🟢" if brick['direction'] == 1 else "🔴"
+            signal_text = {"open": "开仓", "reverse": "反转", "hold": "持有"}[signal]
+            
+            print(f"\n[{row['timestamp']}] {direction_symbol} 砖块#{brick_count}")
+            print(f"  方向: {'上涨' if brick['direction'] == 1 else '下跌'}")
+            print(f"  价格: {brick['brick_open']:.2f} → {brick['brick_close']:.2f}")
+            print(f"  信号: {signal_text}")
+            print(f"  账户余额: ${strategy.balance:.2f}")
+            print(f"  持仓: {'多头' if strategy.position.direction == 1 else '空头' if strategy.position.direction == -1 else '空仓'}")
+            if not strategy.position.is_empty:
+                print(f"  持仓价格: ${strategy.position.entry_price:.2f}")
+                print(f"  持仓数量: {strategy.position.quantity:.6f}")
+            
+            last_brick_close = brick['brick_close']
+            buffer = []
+    
+    print("\n" + "="*70)
+    print("✅ 模拟交易完成")
+    print("="*70)
+    
+    # 打印最终统计
+    stats = strategy.calculate_statistics()
     strategy.print_statistics(stats)
-    
-    # 打印交易记录
     strategy.print_all_trades()
     
     return stats
