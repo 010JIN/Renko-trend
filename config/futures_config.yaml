@@ -1,0 +1,269 @@
+# 期货交易配置 (MNQ/MGC Short-term Trading)
+# 适用于 Popfirm 平台的 MNQ 和 MGC 交易
+
+# ============================
+# 交易品种配置
+# ============================
+instruments:
+  MNQ:
+    name: "Micro E-mini Nasdaq-100"
+    exchange: "CME"
+    tick_size: 0.25          # 最小变动单位
+    tick_value: 0.50         # 每跳价值 ($0.50)
+    contract_size: 2         # 合约乘数
+    margin_requirement: 1500  # 初始保证金估计值
+    trading_hours: "18:00-17:00 CT"  # 交易时间
+    recommended_brick_size: 10.0  # 推荐砖块大小（点数）
+    
+  MGC:
+    name: "Micro Gold Futures"
+    exchange: "COMEX"
+    tick_size: 0.10          # 最小变动单位
+    tick_value: 1.00         # 每跳价值 ($1.00)
+    contract_size: 10        # 合约乘数 (10 troy ounces)
+    margin_requirement: 1000  # 初始保证金估计值
+    trading_hours: "18:00-17:00 CT"  # 交易时间
+    recommended_brick_size: 5.0   # 推荐砖块大小（点数）
+
+# ============================
+# 数据源配置 (通用)
+# ============================
+data:
+  # 支持的时间框架
+  primary_timeframe: 5m     # 主交易周期
+  secondary_timeframe: 15m  # 确认周期
+  trend_timeframe: 1h       # 趋势过滤周期
+  
+  # 数据获取设置
+  fetch_limit: 500          # 历史数据条数
+  update_interval: 5        # 更新间隔（秒）
+
+# ============================
+# 砖型图配置
+# ============================
+renko:
+  method: fixed             # 期货推荐使用固定点数法
+  use_wicks: false          # 不使用影线
+  
+  # MNQ 砖块配置
+  mnq:
+    brick_size: 10.0        # 10点/砖块，适合5分钟级别
+    atr_multiplier: 1.5     # ATR法时的倍数
+    
+  # MGC 砖块配置
+  mgc:
+    brick_size: 5.0         # 5点/砖块，适合5分钟级别
+    atr_multiplier: 1.5     # ATR法时的倍数
+
+# ============================
+# 警报信号配置
+# ============================
+alerts:
+  enabled: true
+  
+  # 反转信号配置
+  reversal:
+    enabled: true
+    min_confirmation_bricks: 2    # 最小确认砖块数
+    volume_surge_ratio: 1.3       # 成交量放大倍数要求
+    rsi_oversold: 30              # RSI超卖阈值
+    rsi_overbought: 70            # RSI超买阈值
+    use_divergence: true          # 使用背离检测
+    
+  # 趋势突破信号配置
+  breakout:
+    enabled: true
+    lookback_periods: 20          # 回溯周期（用于计算关键位）
+    min_volume_ratio: 1.5         # 突破时成交量最小倍数
+    false_breakout_filter: true   # 假突破过滤
+    confirmation_candles: 2       # 确认K线数
+    
+  # 顺势交易信号配置  
+  trend_following:
+    enabled: true
+    min_trend_strength: 0.6       # 最小趋势强度
+    pullback_depth_ratio: 0.382   # 回撤深度比例（斐波那契）
+    max_pullback_ratio: 0.618     # 最大回撤比例
+    
+  # 订单流分析配置
+  order_flow:
+    enabled: true
+    delta_threshold: 0.2          # Delta不平衡阈值
+    volume_profile_levels: 10     # 成交量分布层级
+    imbalance_ratio: 2.0          # 订单不平衡比率阈值
+
+# ============================
+# K线形态识别配置
+# ============================
+candlestick_patterns:
+  enabled: true
+  
+  # 反转形态
+  reversal_patterns:
+    - hammer                # 锤子线
+    - inverted_hammer       # 倒锤子
+    - engulfing             # 吞没形态
+    - piercing              # 刺透形态
+    - dark_cloud            # 乌云盖顶
+    - doji                  # 十字星
+    - morning_star          # 早晨之星
+    - evening_star          # 黄昏之星
+    - three_white_soldiers  # 三白兵
+    - three_black_crows     # 三乌鸦
+    
+  # 延续形态
+  continuation_patterns:
+    - rising_three          # 上升三法
+    - falling_three         # 下降三法
+    - bullish_flag          # 看涨旗形
+    - bearish_flag          # 看跌旗形
+
+# ============================
+# 风险管理配置
+# ============================
+risk_management:
+  # 仓位管理
+  max_position_size: 5          # 最大持仓合约数
+  position_sizing: fixed        # fixed | risk_based | kelly
+  contracts_per_trade: 1        # 每笔交易合约数
+  
+  # 止损止盈
+  stop_loss:
+    type: atr                   # fixed | atr | brick
+    atr_multiplier: 2.0         # ATR止损倍数
+    fixed_points_mnq: 20        # MNQ固定止损点数
+    fixed_points_mgc: 10        # MGC固定止损点数
+    brick_count: 3              # 砖块止损数量
+    
+  take_profit:
+    type: ratio                 # fixed | ratio | trailing
+    risk_reward_ratio: 2.0      # 风险回报比
+    trailing_activation: 1.5    # 移动止盈激活倍数
+    trailing_distance: 0.5      # 移动止盈距离
+  
+  # 每日限制
+  max_daily_loss: 300           # 每日最大亏损 ($)
+  max_daily_trades: 10          # 每日最大交易次数
+  max_consecutive_losses: 3     # 最大连续亏损次数
+
+# ============================
+# 交易时段过滤
+# ============================
+session_filter:
+  enabled: true
+  
+  # 最佳交易时段 (CT 中部时间)
+  preferred_sessions:
+    - name: "Asia Open"
+      start: "18:00"
+      end: "20:00"
+      quality: medium
+      
+    - name: "London Open"  
+      start: "02:00"
+      end: "05:00"
+      quality: high
+      
+    - name: "US Pre-Market"
+      start: "07:00"
+      end: "08:30"
+      quality: high
+      
+    - name: "US Market Open"
+      start: "08:30"
+      end: "10:30"
+      quality: highest
+      
+    - name: "US Afternoon"
+      start: "13:00"
+      end: "15:00"
+      quality: medium
+  
+  # 避开的时段
+  avoid_sessions:
+    - name: "Lunch Hour"
+      start: "11:00"
+      end: "12:30"
+      reason: "低流动性"
+      
+    - name: "Late Night"
+      start: "22:00"
+      end: "01:00"
+      reason: "流动性差"
+
+# ============================
+# 通知配置
+# ============================
+notifications:
+  enabled: true
+  
+  # 声音警报
+  sound:
+    enabled: true
+    reversal_signal: "alert_reversal.wav"
+    breakout_signal: "alert_breakout.wav"
+    trend_signal: "alert_trend.wav"
+    
+  # 桌面通知
+  desktop:
+    enabled: true
+    
+  # Telegram 通知
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+    
+  # Discord 通知
+  discord:
+    enabled: false
+    webhook_url: ""
+
+# ============================
+# 显示配置
+# ============================
+display:
+  # 控制台输出
+  console:
+    show_all_candles: false
+    show_all_bricks: false
+    show_signals_only: true
+    color_output: true
+    
+  # 图表设置
+  chart:
+    enabled: true
+    show_volume: true
+    show_indicators: true
+    show_signals: true
+    auto_refresh: true
+    refresh_interval: 5
+
+# ============================
+# 指标配置
+# ============================
+indicators:
+  rsi:
+    period: 14
+    overbought: 70
+    oversold: 30
+    
+  macd:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+    
+  ema:
+    fast_period: 9
+    medium_period: 21
+    slow_period: 50
+    
+  atr:
+    period: 14
+    
+  volume_ma:
+    period: 20
+    
+  bollinger:
+    period: 20
+    std_dev: 2.0
