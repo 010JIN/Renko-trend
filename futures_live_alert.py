@@ -37,14 +37,28 @@ class FuturesLiveAlertSystem:
     - MGC (Micro Gold Futures)
     - 多时间框架分析
     - 实时通知
+    
+    ⚠️ 重要提示：
+    当前版本使用加密货币数据作为期货数据的替代源，仅用于演示和测试目的。
+    在实际交易中，请接入真实的期货数据源（如 CQG, Rithmic, IQFeed 等）。
+    使用替代数据源生成的信号不适用于实盘交易！
     """
     
-    # 使用加密货币数据作为期货的替代
-    # 在实际应用中，应使用真实的期货数据源
+    # ⚠️ 数据源警告：
+    # 以下映射使用加密货币数据作为期货的替代，仅用于演示！
+    # 实际交易时，请替换为真实的期货数据API
+    # 推荐的期货数据源：CQG, Rithmic, IQFeed, TradeStation
     SYMBOL_MAPPING = {
-        "MNQ": "BTCUSDT",  # 使用BTC作为MNQ的替代数据源
-        "MGC": "ETHUSDT",  # 使用ETH作为MGC的替代数据源
+        "MNQ": "BTCUSDT",  # 演示用：使用BTC作为MNQ的替代数据源
+        "MGC": "ETHUSDT",  # 演示用：使用ETH作为MGC的替代数据源
     }
+    
+    # 数据源警告消息
+    DATA_SOURCE_WARNING = (
+        "⚠️ 警告：当前使用加密货币数据作为期货数据的替代！\n"
+        "   此数据仅用于演示和策略测试，不适用于实盘交易。\n"
+        "   实盘交易请接入真实的期货数据源。"
+    )
     
     BINANCE_URL = "https://api.binance.com/api/v3/klines"
     
@@ -107,6 +121,9 @@ class FuturesLiveAlertSystem:
         
         logger.info(f"初始化期货实时警报系统: {instrument} | "
                    f"主周期: {primary_timeframe} | 确认周期: {secondary_timeframe}")
+        
+        # 显示数据源警告
+        logger.warning(self.DATA_SOURCE_WARNING)
     
     def _load_config(self, config_path: str) -> Dict:
         """加载配置文件"""
@@ -218,8 +235,14 @@ class FuturesLiveAlertSystem:
         notification_config = self.config.get("notifications", {})
         
         # 声音通知
+        # 注意: 系统蜂鸣在某些系统/终端可能不工作
         if notification_config.get("sound", {}).get("enabled", True):
-            print('\a')  # 系统蜂鸣
+            try:
+                # 尝试使用系统蜂鸣
+                print('\a', end='', flush=True)
+            except Exception:
+                # 如果失败，静默处理
+                pass
         
         # 控制台输出
         print(alert)

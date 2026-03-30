@@ -121,10 +121,12 @@ class CandlestickPatternRecognizer:
         if upper_shadow > body * 0.5:
             return False
             
-        # 前面是下跌趋势
+        # 前面是下跌趋势: 较早的收盘价平均值 > 较近的收盘价
         if len(prev_candles) >= 3:
-            trend = prev_candles['close'].iloc[-3:].mean() > prev_candles['close'].iloc[-1]
-            return trend
+            earlier_avg = prev_candles['close'].iloc[-3:-1].mean()  # 前2根K线的平均
+            recent_close = prev_candles['close'].iloc[-1]  # 最后一根K线
+            is_downtrend = earlier_avg > recent_close
+            return is_downtrend
             
         return False
     
@@ -151,10 +153,12 @@ class CandlestickPatternRecognizer:
         if lower_shadow > body * 0.5:
             return False
             
-        # 前面是下跌趋势
+        # 前面是下跌趋势: 较早的收盘价平均值 > 较近的收盘价
         if len(prev_candles) >= 3:
-            trend = prev_candles['close'].iloc[-3:].mean() > prev_candles['close'].iloc[-1]
-            return trend
+            earlier_avg = prev_candles['close'].iloc[-3:-1].mean()  # 前2根K线的平均
+            recent_close = prev_candles['close'].iloc[-1]  # 最后一根K线
+            is_downtrend = earlier_avg > recent_close
+            return is_downtrend
             
         return False
     
@@ -358,10 +362,26 @@ class OrderFlowAnalyzer:
                 buy_volume += row['volume'] * 0.5
                 sell_volume += row['volume'] * 0.5
         
+        # 处理零成交量情况
+        if sell_volume == 0 and buy_volume == 0:
+            return {"imbalance": False, "reason": "成交量数据不足"}
+        
         if sell_volume == 0:
-            sell_volume = 1  # 避免除以零
+            # 只有买入量，极度看涨
+            return {
+                "imbalance": True,
+                "type": "bullish",
+                "ratio": float('inf'),
+                "description": "仅有买入量，极度不平衡"
+            }
         if buy_volume == 0:
-            buy_volume = 1
+            # 只有卖出量，极度看跌
+            return {
+                "imbalance": True,
+                "type": "bearish",
+                "ratio": float('inf'),
+                "description": "仅有卖出量，极度不平衡"
+            }
             
         buy_sell_ratio = buy_volume / sell_volume
         sell_buy_ratio = sell_volume / buy_volume
@@ -392,12 +412,22 @@ class OrderFlowAnalyzer:
         divergence = self.detect_delta_divergence(df)
         imbalance = self.detect_volume_imbalance(df)
         
+        # 确定Delta趋势
+        if len(cum_delta) >= 5:
+            recent_delta_mean = cum_delta.iloc[-5:].mean()
+            if recent_delta_mean > 0:
+                delta_trend = "bullish"
+            else:
+                delta_trend = "bearish"
+        else:
+            delta_trend = "neutral"
+        
         return {
             "current_delta": delta.iloc[-1] if len(delta) > 0 else 0,
             "cumulative_delta": cum_delta.iloc[-1] if len(cum_delta) > 0 else 0,
             "divergence": divergence,
             "imbalance": imbalance,
-            "delta_trend": "bullish" if cum_delta.iloc[-5:].mean() > 0 else "bearish" if len(cum_delta) >= 5 else "neutral"
+            "delta_trend": delta_trend
         }
 
 
