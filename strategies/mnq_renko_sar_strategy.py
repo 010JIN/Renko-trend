@@ -282,10 +282,11 @@ class CandlestickPatterns:
         if upper > body * 0.5:
             return False
         
-        # 检查前面是下跌趋势
+        # 检查前面是下跌趋势: 前3根K线的平均 > 前1根K线
         if idx >= 3:
-            earlier_avg = df['close'].iloc[idx-3:idx].mean()
-            if df['close'].iloc[idx-1] >= earlier_avg:
+            earlier_avg = df['close'].iloc[idx-3:idx-1].mean()  # 前3、前2根的平均
+            recent_close = df['close'].iloc[idx-1]  # 前1根
+            if recent_close >= earlier_avg:
                 return False
         
         return True
@@ -320,10 +321,11 @@ class CandlestickPatterns:
         if lower > body * 0.5:
             return False
         
-        # 检查前面是下跌趋势
+        # 检查前面是下跌趋势: 前3根K线的平均 > 前1根K线
         if idx >= 3:
-            earlier_avg = df['close'].iloc[idx-3:idx].mean()
-            if df['close'].iloc[idx-1] >= earlier_avg:
+            earlier_avg = df['close'].iloc[idx-3:idx-1].mean()  # 前3、前2根的平均
+            recent_close = df['close'].iloc[idx-1]  # 前1根
+            if recent_close >= earlier_avg:
                 return False
         
         return True

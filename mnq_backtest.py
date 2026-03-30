@@ -122,7 +122,11 @@ def download_mnq_data(
             df.columns = df.columns.str.lower()
             
             # 模拟MNQ价格 (QQQ价格 * ~45-50 ≈ MNQ价格)
+            # ⚠️ 注意：此乘数是近似值，实际MNQ价格可能有所不同
+            # 实盘交易前，请使用真实的MNQ期货数据进行回测
+            # 当前假设：QQQ ≈ $440, MNQ ≈ $19,800, 比例 ≈ 45
             mnq_multiplier = 45
+            logger.warning(f"⚠️ 使用QQQ × {mnq_multiplier}作为MNQ价格代理，仅供参考")
             df['open'] = df['open'] * mnq_multiplier
             df['high'] = df['high'] * mnq_multiplier
             df['low'] = df['low'] * mnq_multiplier
