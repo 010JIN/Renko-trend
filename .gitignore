@@ -42,9 +42,11 @@ logs/
 data/raw/*
 data/processed/*
 data/models/*
+data/backtest_results/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/models/.gitkeep
+!data/backtest_results/.gitkeep
 
 # 配置文件（包含敏感信息）
 config/exchanges.yaml

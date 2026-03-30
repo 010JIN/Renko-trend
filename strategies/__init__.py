@@ -12,6 +12,11 @@ from .short_term_alert_strategy import (
     OrderFlowAnalyzer,
     TechnicalIndicators
 )
+from .mnq_renko_sar_strategy import (
+    MNQRenkoSARStrategy,
+    ParabolicSAR,
+    CandlestickPatterns
+)
 
 __all__ = [
     # 砖型图反转策略
@@ -26,5 +31,10 @@ __all__ = [
     'PatternType',
     'CandlestickPatternRecognizer',
     'OrderFlowAnalyzer',
-    'TechnicalIndicators'
+    'TechnicalIndicators',
+    
+    # MNQ Renko + SAR 策略
+    'MNQRenkoSARStrategy',
+    'ParabolicSAR',
+    'CandlestickPatterns'
 ]
