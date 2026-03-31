@@ -586,19 +586,20 @@ def main():
     df.to_csv(output_dir / "mnq_simulated_2024.csv")
     logger.info(f"数据已保存到 {output_dir / 'mnq_simulated_2024.csv'}")
     
-    # 运行回测
+    # 运行回测（使用最优参数）
     logger.info("开始回测...")
+    logger.info("使用最优参数: 砖块=8.0, SAR=0.02/0.02/0.2, 确认砖块=2, K线过滤=禁用")
     backtest = RealisticBacktestEngine(
         initial_capital=10000.0,
-        brick_size=15.0,  # 增大砖块尺寸以减少噪音交易
-        sar_af_start=0.02,
-        sar_af_step=0.02,
-        sar_af_max=0.2,
+        brick_size=8.0,  # 最优砖块大小
+        sar_af_start=0.02,  # SAR初始AF
+        sar_af_step=0.02,  # SAR步进AF
+        sar_af_max=0.2,  # SAR最大AF
         tick_size=0.25,
         tick_value=0.50,
         commission=2.0,
         contracts=1,
-        min_bricks_for_trend=2
+        min_bricks_for_trend=2  # 确认砖块数
     )
     
     stats = backtest.run_backtest(df)
