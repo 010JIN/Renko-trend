@@ -1,0 +1,251 @@
+// =============================================
+// MNQ Renko + Parabolic SAR 趋势跟踪指标
+// =============================================
+// 
+// 策略说明：
+// 1. 使用模拟Renko砖块检测趋势方向
+// 2. 结合Parabolic SAR进行止损管理
+// 3. 趋势确认后发出入场信号
+// 4. 支持警报功能用于实时交易提醒
+//
+// 最优参数（基于历史回测）：
+// - 砖块大小: 8.0点
+// - SAR初始AF: 0.02
+// - SAR步进AF: 0.02
+// - SAR最大AF: 0.2
+// - 确认砖块数: 2
+// - K线形态过滤: 禁用
+//
+// 作者: Renko-trend
+// 版本: 1.0
+// =============================================
+
+//@version=5
+indicator("MNQ Renko + SAR 趋势指标", 
+     overlay=true, 
+     shorttitle="Renko+SAR",
+     format=format.price,
+     precision=2)
+
+// =============================================
+// 输入参数
+// =============================================
+group_renko = "🔷 Renko 设置"
+brick_size = input.float(8.0, "砖块大小 (点)", minval=1.0, step=0.5, group=group_renko, 
+     tooltip="Renko砖块大小，用于过滤市场噪音。推荐值: MNQ=8点")
+confirm_bricks = input.int(2, "确认砖块数", minval=1, maxval=5, group=group_renko,
+     tooltip="趋势确认所需的连续同向砖块数量")
+
+group_sar = "📊 Parabolic SAR 设置"
+sar_start = input.float(0.02, "初始加速因子 (AF Start)", minval=0.01, maxval=0.1, step=0.01, group=group_sar)
+sar_increment = input.float(0.02, "加速因子步进 (AF Step)", minval=0.01, maxval=0.1, step=0.01, group=group_sar)
+sar_maximum = input.float(0.2, "最大加速因子 (AF Max)", minval=0.1, maxval=0.5, step=0.05, group=group_sar)
+
+group_visual = "🎨 显示设置"
+show_renko_levels = input.bool(true, "显示砖块水平线", group=group_visual)
+show_sar = input.bool(true, "显示SAR点", group=group_visual)
+show_signals = input.bool(true, "显示买卖信号", group=group_visual)
+show_trend_bg = input.bool(true, "显示趋势背景色", group=group_visual)
+
+group_alerts = "🔔 警报设置"
+alert_long = input.bool(true, "启用做多警报", group=group_alerts)
+alert_short = input.bool(true, "启用做空警报", group=group_alerts)
+alert_exit = input.bool(true, "启用平仓警报", group=group_alerts)
+
+// =============================================
+// Parabolic SAR 计算 (使用内置函数)
+// =============================================
+sar_value = ta.sar(sar_start, sar_increment, sar_maximum)
+sar_direction = close > sar_value ? 1 : -1
+
+// =============================================
+// 模拟 Renko 砖块逻辑
+// =============================================
+// 由于TradingView不支持真正的Renko，我们使用价格变动模拟砖块行为
+
+// 初始化砖块基准价格
+var float brick_base = na
+var int brick_direction = 0
+var int consecutive_bricks = 0
+var float last_brick_close = na
+
+// 首根K线初始化
+if na(brick_base)
+    brick_base := math.floor(close / brick_size) * brick_size
+
+// 计算当前价格相对于砖块基准的位置
+price_diff = close - brick_base
+bricks_up = math.floor(price_diff / brick_size)
+bricks_down = math.floor(-price_diff / brick_size)
+
+// 检测新砖块形成
+new_brick_up = bricks_up >= 1 and (brick_direction != 1 or close > last_brick_close + brick_size)
+new_brick_down = bricks_down >= 1 and (brick_direction != -1 or close < last_brick_close - brick_size)
+
+// 更新砖块状态
+if new_brick_up
+    if brick_direction == 1
+        consecutive_bricks := math.min(consecutive_bricks + 1, 10)
+    else
+        brick_direction := 1
+        consecutive_bricks := 1
+    brick_base := math.floor(close / brick_size) * brick_size
+    last_brick_close := brick_base
+
+if new_brick_down
+    if brick_direction == -1
+        consecutive_bricks := math.min(consecutive_bricks + 1, 10)
+    else
+        brick_direction := -1
+        consecutive_bricks := 1
+    brick_base := math.ceil(close / brick_size) * brick_size
+    last_brick_close := brick_base
+
+// =============================================
+// 趋势判断
+// =============================================
+// Renko趋势：连续砖块数达到确认数
+renko_uptrend = brick_direction == 1 and consecutive_bricks >= confirm_bricks
+renko_downtrend = brick_direction == -1 and consecutive_bricks >= confirm_bricks
+
+// SAR趋势
+sar_uptrend = sar_direction == 1
+sar_downtrend = sar_direction == -1
+
+// 综合趋势 (Renko + SAR 同向确认)
+strong_uptrend = renko_uptrend and sar_uptrend
+strong_downtrend = renko_downtrend and sar_downtrend
+
+// =============================================
+// 信号生成
+// =============================================
+var int position = 0  // 0=空仓, 1=多头, -1=空头
+
+// 入场信号
+long_entry = strong_uptrend and position != 1 and not strong_uptrend[1]
+short_entry = strong_downtrend and position != -1 and not strong_downtrend[1]
+
+// 平仓信号 (SAR反转或Renko反转)
+long_exit = position == 1 and (sar_direction == -1 or brick_direction == -1)
+short_exit = position == -1 and (sar_direction == 1 or brick_direction == 1)
+
+// 更新持仓状态
+if long_entry
+    position := 1
+if short_entry
+    position := -1
+if long_exit and position == 1
+    position := 0
+if short_exit and position == -1
+    position := 0
+
+// =============================================
+// 可视化
+// =============================================
+
+// SAR 点
+plotshape(show_sar and sar_direction == 1 ? sar_value : na, 
+     style=shape.circle, location=location.absolute, 
+     color=color.new(color.green, 50), size=size.tiny, title="SAR 多头")
+plotshape(show_sar and sar_direction == -1 ? sar_value : na, 
+     style=shape.circle, location=location.absolute, 
+     color=color.new(color.red, 50), size=size.tiny, title="SAR 空头")
+
+// 砖块水平线
+upper_brick = brick_base + brick_size
+lower_brick = brick_base - brick_size
+plot(show_renko_levels ? brick_base : na, "砖块基准线", color=color.gray, style=plot.style_linebr, linewidth=1)
+plot(show_renko_levels ? upper_brick : na, "上方砖块", color=color.new(color.green, 70), style=plot.style_linebr, linewidth=1)
+plot(show_renko_levels ? lower_brick : na, "下方砖块", color=color.new(color.red, 70), style=plot.style_linebr, linewidth=1)
+
+// 趋势背景色
+bgcolor(show_trend_bg and strong_uptrend ? color.new(color.green, 90) : 
+        show_trend_bg and strong_downtrend ? color.new(color.red, 90) : na, 
+        title="趋势背景")
+
+// 买卖信号
+plotshape(show_signals and long_entry ? low : na, 
+     style=shape.triangleup, location=location.belowbar, 
+     color=color.green, size=size.normal, title="做多信号",
+     text="买入", textcolor=color.green)
+
+plotshape(show_signals and short_entry ? high : na, 
+     style=shape.triangledown, location=location.abovebar, 
+     color=color.red, size=size.normal, title="做空信号",
+     text="卖出", textcolor=color.red)
+
+plotshape(show_signals and long_exit ? high : na, 
+     style=shape.xcross, location=location.abovebar, 
+     color=color.orange, size=size.small, title="多头平仓")
+
+plotshape(show_signals and short_exit ? low : na, 
+     style=shape.xcross, location=location.belowbar, 
+     color=color.orange, size=size.small, title="空头平仓")
+
+// =============================================
+// 信息面板
+// =============================================
+var table infoTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80))
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "📊 Renko+SAR", text_color=color.white, text_size=size.normal)
+    table.cell(infoTable, 1, 0, "", text_color=color.white)
+    
+    table.cell(infoTable, 0, 1, "砖块方向", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 1, brick_direction == 1 ? "🟢 上涨" : brick_direction == -1 ? "🔴 下跌" : "⚪ 未定", 
+         text_color=brick_direction == 1 ? color.green : brick_direction == -1 ? color.red : color.gray, 
+         text_size=size.small)
+    
+    table.cell(infoTable, 0, 2, "连续砖块", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 2, str.tostring(consecutive_bricks), text_color=color.white, text_size=size.small)
+    
+    table.cell(infoTable, 0, 3, "SAR方向", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 3, sar_direction == 1 ? "🟢 多头" : "🔴 空头", 
+         text_color=sar_direction == 1 ? color.green : color.red, 
+         text_size=size.small)
+    
+    table.cell(infoTable, 0, 4, "SAR值", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 4, str.tostring(sar_value, "#.##"), text_color=color.white, text_size=size.small)
+    
+    table.cell(infoTable, 0, 5, "趋势确认", text_color=color.gray, text_size=size.small)
+    trend_status = strong_uptrend ? "✅ 强多头" : strong_downtrend ? "✅ 强空头" : "⏳ 等待确认"
+    trend_color = strong_uptrend ? color.green : strong_downtrend ? color.red : color.yellow
+    table.cell(infoTable, 1, 5, trend_status, text_color=trend_color, text_size=size.small)
+    
+    table.cell(infoTable, 0, 6, "当前持仓", text_color=color.gray, text_size=size.small)
+    position_text = position == 1 ? "🟢 多头" : position == -1 ? "🔴 空头" : "⚪ 空仓"
+    position_color = position == 1 ? color.green : position == -1 ? color.red : color.gray
+    table.cell(infoTable, 1, 6, position_text, text_color=position_color, text_size=size.small)
+    
+    table.cell(infoTable, 0, 7, "砖块大小", text_color=color.gray, text_size=size.small)
+    table.cell(infoTable, 1, 7, str.tostring(brick_size) + " 点", text_color=color.white, text_size=size.small)
+
+// =============================================
+// 警报条件
+// =============================================
+// 做多警报
+alertcondition(alert_long and long_entry, 
+     title="🟢 做多信号", 
+     message="MNQ Renko+SAR: 做多信号! Renko趋势上涨 + SAR多头确认. 价格: {{close}}")
+
+// 做空警报
+alertcondition(alert_short and short_entry, 
+     title="🔴 做空信号", 
+     message="MNQ Renko+SAR: 做空信号! Renko趋势下跌 + SAR空头确认. 价格: {{close}}")
+
+// 多头平仓警报
+alertcondition(alert_exit and long_exit, 
+     title="⚠️ 多头平仓", 
+     message="MNQ Renko+SAR: 多头平仓信号! SAR或Renko反转. 价格: {{close}}")
+
+// 空头平仓警报
+alertcondition(alert_exit and short_exit, 
+     title="⚠️ 空头平仓", 
+     message="MNQ Renko+SAR: 空头平仓信号! SAR或Renko反转. 价格: {{close}}")
+
+// 综合警报 (所有信号)
+alertcondition(long_entry or short_entry or long_exit or short_exit,
+     title="📢 所有交易信号",
+     message="MNQ Renko+SAR 信号: " + 
+             (long_entry ? "做多入场" : short_entry ? "做空入场" : long_exit ? "多头平仓" : "空头平仓") + 
+             " | 价格: {{close}} | 时间: {{time}}")
