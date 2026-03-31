@@ -665,25 +665,27 @@ def _generate_synthetic_data(n_bars: int = 50000) -> pd.DataFrame:
     logger.warning("⚠️ 使用模拟数据 - 真实回测需要真实历史数据")
     
     np.random.seed(42)
-    start_price = 19800.0  # MNQ典型价格
-    volatility = 0.0002   # 更真实的5分钟波动率
+    start_price = 19800.0  # MNQ typical price (as of 2024)
     
-    # 使用更真实的价格走势（均值回归+趋势）
+    # Volatility estimate: MNQ 5-minute bars typically move ~10-20 points
+    # With price ~19800, this is about 0.05-0.1%, using 0.02% as base volatility
+    volatility = 0.0002
+    
+    # Generate realistic price series (random walk + mean reversion)
     prices = [start_price]
     for i in range(1, n_bars):
-        # 随机游走 + 均值回归
         drift = np.random.normal(0, volatility * prices[-1])
-        mean_reversion = (start_price - prices[-1]) * 0.0001  # 轻微均值回归
+        mean_reversion = (start_price - prices[-1]) * 0.0001  # Slight mean reversion
         new_price = prices[-1] + drift + mean_reversion
-        prices.append(max(new_price, start_price * 0.8))  # 防止价格过低
+        prices.append(max(new_price, start_price * 0.8))  # Floor at 80%
     
     prices = np.array(prices)
     timestamps = pd.date_range(start='2023-01-01', periods=n_bars, freq='5min')
     
     data = []
     for i, (ts, close) in enumerate(zip(timestamps, prices)):
-        # 合理的5分钟K线波动
-        bar_range = prices[i] * 0.0005  # 约10点左右的波动
+        # Realistic 5-minute intra-bar range (~10 points)
+        bar_range = prices[i] * 0.0005
         high = close + np.random.uniform(0, bar_range)
         low = close - np.random.uniform(0, bar_range)
         open_price = prices[i-1] if i > 0 else start_price

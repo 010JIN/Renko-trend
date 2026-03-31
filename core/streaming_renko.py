@@ -140,7 +140,8 @@ class StreamingRenkoBuilder:
                     brick_low=self.current_brick_close,
                     direction=1,
                     completed_at=timestamp,
-                    completed_price=self.current_brick_close + self.brick_size,  # 触发价格
+                    # Trigger price - the price level that caused this brick to complete
+                    completed_price=self.current_brick_close + self.brick_size,
                     volume=self.volume_accumulated
                 )
                 self.bricks.append(new_brick)
