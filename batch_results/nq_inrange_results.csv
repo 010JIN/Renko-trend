@@ -1,0 +1,7 @@
+interval,method,param,param_label,final_balance,total_return,total_return_pct,max_drawdown_pct,total_trades,win_rate,profit_factor,avg_win,avg_loss,avg_daily_trades,in_trade_freq_range,trade_freq_score,days_total,days_profit,days_loss,days_over_200,avg_daily_pnl,max_daily_loss,profit_target_hit,daily_loss_ok,withdrawal_days_ok,profimr_eval_pass,profimr_withdrawal_pass,composite_score
+5m,atr,"(7, 0.5)",atr7x0.5,57582.55,7582.55,15.17,0.41,382,44.76,3.086,65.6,-17.22,6.4,True,0.979,60,50,9,14,126.38,-149.56,True,True,True,True,True,64.84
+5m,atr,"(14, 0.5)",atr14x0.5,57348.7,7348.7,14.7,0.46,400,42.5,2.923,65.71,-16.62,6.7,True,0.974,60,49,9,13,122.48,-103.3,True,True,True,True,True,63.42
+15m,atr,"(7, 0.5)",atr7x0.5,54358.45,4358.45,8.72,0.24,232,42.67,3.905,59.18,-11.28,3.9,True,0.605,59,49,8,5,73.87,-91.86,True,True,True,True,True,57.38
+15m,atr,"(14, 0.5)",atr14x0.5,54095.06,4095.06,8.19,0.39,236,44.49,3.406,55.21,-12.99,4.0,True,0.615,59,45,11,6,69.41,-144.41,True,True,True,True,True,57.11
+5m,fixed,10,fixed10,54580.0,4580.0,9.16,0.56,256,42.58,2.205,76.88,-25.85,4.3,True,0.656,60,40,13,9,76.33,-160.0,True,True,True,True,True,52.54
+5m,atr,"(14, 0.75)",atr14x0.75,54161.31,4161.31,8.32,0.63,222,41.44,2.153,84.45,-27.75,3.7,True,0.569,60,37,17,10,69.36,-221.35,True,True,True,True,True,49.78

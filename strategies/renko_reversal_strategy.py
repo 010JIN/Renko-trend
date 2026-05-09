@@ -6,13 +6,19 @@
 3. 固定本金：10000 USDT
 4. 仓位管理：剩余保证金全仓交易
 5. 无杠杆（1x）
+
+新增支持：
+- contract_multiplier：合约点值（如 MNQ Micro E-mini = 2 USD/点，NQ E-mini = 20 USD/点，加密货币 = 1）
+- max_contracts：最大持仓合约数
+- max_daily_loss：每日最大亏损（0=不限制）
+- session_filter：交易时段过滤（仅在指定时段内开仓）
 """
 
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, date
 from loguru import logger
 
 
@@ -64,13 +70,20 @@ class Trade:
 class RenkoReversalStrategy:
     """
     砖型图反转策略
-    
+
     核心逻辑：
     1. 检测趋势反转：连续2个同向砖块表示趋势确立
     2. 当趋势反转时：
        - 如果有持仓：平仓当前持仓
        - 立刻反向开仓（全仓）
     3. 资金管理：每次使用全部可用保证金（无杠杆）
+
+    期货模式（contract_multiplier > 1）：
+    - quantity = 合约手数（整数）
+    - pnl = 价格差 × quantity × contract_multiplier
+    - 例如 MNQ Micro E-mini：1点 = $2，买1张涨10点 = $20
+    - 例如 NQ E-mini：1点 = $20，买1张涨10点 = $200
+    - contract_multiplier ≤ 1 保留用于加密货币（连续计价，无合约倍数）
     """
 
     def on_brick(self, brick) -> str:
@@ -109,23 +122,38 @@ class RenkoReversalStrategy:
         initial_capital: float = 10000.0,
         commission_rate: float = 0.0004,  # 手续费率 0.04%
         slippage_rate: float = 0.0001,    # 滑点 0.01%
+        contract_multiplier: float = 1.0, # 合约点值倍数（NQ E-mini=20, 加密货币=1）
+        max_contracts: int = 1,           # 最大持仓合约数
+        max_daily_loss: float = 0.0,      # 每日最大亏损限额（0=不限制）
+        session_start_hour: Optional[int] = None,  # 交易时段开始小时（UTC）
+        session_end_hour: Optional[int] = None,    # 交易时段结束小时（UTC）
     ):
         """
         初始化策略
-        
+
         Args:
-            initial_capital: 初始资金（USDT）
-            commission_rate: 手续费率（默认0.04%）
-            slippage_rate: 滑点率（默认0.01%）
+            initial_capital: 初始资金
+            commission_rate: 手续费率（默认0.04%，加密货币适用；期货按固定$/张设置）
+            slippage_rate: 滑点率
+            contract_multiplier: 合约点值（如 NQ E-mini = 20 USD/点，加密货币 = 1）
+            max_contracts: 最大持仓合约数
+            max_daily_loss: 每日最大亏损限额，超过后当天不再开仓（0=不限）
+            session_start_hour: 只在此小时（UTC）之后开仓，None=不限
+            session_end_hour: 只在此小时（UTC）之前开仓，None=不限
         """
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
-        
+        self.contract_multiplier = contract_multiplier
+        self.max_contracts = max_contracts
+        self.max_daily_loss = max_daily_loss
+        self.session_start_hour = session_start_hour
+        self.session_end_hour = session_end_hour
+
         # 账户状态
         self.balance = initial_capital  # 当前余额
         self.equity = initial_capital   # 总权益（余额+持仓市值）
-        
+
         # 持仓
         self.position = Position(
             direction=0,
@@ -135,18 +163,69 @@ class RenkoReversalStrategy:
         )
         # 累计手续费
         self.total_commission = 0.0
-        
+
         # 交易记录
         self.trades: List[Trade] = []
         self.trade_counter = 0
-        
+
         # 统计信息
         self.max_equity = initial_capital
         self.max_drawdown = 0.0
-        
-        logger.info(f"初始化砖型图反转策略: 本金={initial_capital} USDT, "
-                   f"手续费={commission_rate:.2%}, 滑点={slippage_rate:.2%}")
+
+        # 每日跟踪
+        self._daily_pnl: Dict[date, float] = {}   # 每日已实现 P&L
+        self._daily_open_balance: Dict[date, float] = {}  # 每日开盘余额
+        self._daily_trades: Dict[date, int] = {}  # 每日交易次数
+        self._current_day: Optional[date] = None
+
+        logger.info(f"初始化砖型图反转策略: 本金={initial_capital}, "
+                   f"手续费={commission_rate:.4%}, 滑点={slippage_rate:.4%}, "
+                   f"合约倍数={contract_multiplier}, 最大合约数={max_contracts}, "
+                   f"每日限损={max_daily_loss}")
     
+    def _update_daily_tracking(self, timestamp: datetime) -> None:
+        """每日跟踪初始化"""
+        if timestamp is None:
+            return
+        ts = timestamp if isinstance(timestamp, datetime) else pd.Timestamp(timestamp).to_pydatetime()
+        today = ts.date()
+        if today != self._current_day:
+            self._current_day = today
+            self._daily_open_balance[today] = self.balance
+            if today not in self._daily_pnl:
+                self._daily_pnl[today] = 0.0
+            if today not in self._daily_trades:
+                self._daily_trades[today] = 0
+
+    def _is_daily_loss_limit_hit(self, timestamp: datetime) -> bool:
+        """检查今日是否超过每日最大亏损限制"""
+        if self.max_daily_loss <= 0 or timestamp is None:
+            return False
+        ts = timestamp if isinstance(timestamp, datetime) else pd.Timestamp(timestamp).to_pydatetime()
+        today = ts.date()
+        open_balance = self._daily_open_balance.get(today, self.balance)
+        daily_loss = open_balance - self.balance
+        return daily_loss >= self.max_daily_loss
+
+    def _is_in_session(self, timestamp: datetime) -> bool:
+        """检查时间戳是否在交易时段内"""
+        if self.session_start_hour is None and self.session_end_hour is None:
+            return True
+        if timestamp is None:
+            return True
+        ts = timestamp if isinstance(timestamp, datetime) else pd.Timestamp(timestamp).to_pydatetime()
+        hour = ts.hour
+        if self.session_start_hour is not None and self.session_end_hour is not None:
+            if self.session_start_hour < self.session_end_hour:
+                return self.session_start_hour <= hour < self.session_end_hour
+            else:  # 跨午夜
+                return hour >= self.session_start_hour or hour < self.session_end_hour
+        if self.session_start_hour is not None:
+            return hour >= self.session_start_hour
+        if self.session_end_hour is not None:
+            return hour < self.session_end_hour
+        return True
+
     def detect_trend_reversal(
         self, 
         renko_df: pd.DataFrame, 
@@ -180,51 +259,78 @@ class RenkoReversalStrategy:
     
     def calculate_position_size(self, price: float) -> float:
         """
-        计算开仓数量（合约1倍杠杆，全仓）
-        
+        计算开仓数量
+
+        加密货币模式（contract_multiplier=1）：
+          quantity = balance / price（碎股）
+        期货模式（contract_multiplier>1）：
+          quantity = min(max_contracts, floor(balance / (price * contract_multiplier)))
+          至少1张（资金不足时不开仓返回0）
+
         Args:
             price: 开仓价格
-            
+
         Returns:
-            开仓数量（合约张数对应币数）
+            开仓数量（期货=合约张数，加密货币=币数）
         """
-        # 合约模式：保证金 × 杠杆 = 可开仓价值
-        # 1倍杠杆：可开仓价值 = 保证金余额
-        # 预留开仓手续费
-        available = self.balance / (1 + self.commission_rate)
-        
-        # 全仓开仓：可开仓币数 = 可用价值 / 当前价格
-        quantity = available / price
-        
-        return quantity
+        if self.contract_multiplier > 1:
+            # 期货：按合约张数，向下取整
+            contract_value = price * self.contract_multiplier
+            qty = min(self.max_contracts, int(self.balance / contract_value))
+            return float(qty)
+        else:
+            # 加密货币：全仓，预留手续费
+            available = self.balance / (1 + self.commission_rate)
+            return available / price
     
     def open_position(
-        self, 
-        direction: int, 
-        price: float, 
+        self,
+        direction: int,
+        price: float,
         timestamp: datetime
     ) -> None:
         """
         开仓
-        
+
         Args:
             direction: 方向 (1=做多, -1=做空)
             price: 开仓价格
             timestamp: 开仓时间
         """
-        # 计算开仓数量（全仓）
+        self._update_daily_tracking(timestamp)
+
+        # 交易时段过滤
+        if not self._is_in_session(timestamp):
+            logger.debug(f"非交易时段，跳过开仓 @ {timestamp}")
+            return
+
+        # 每日最大亏损过滤
+        if self._is_daily_loss_limit_hit(timestamp):
+            logger.debug(f"已达每日最大亏损限制，跳过开仓 @ {timestamp}")
+            return
+
+        # 计算开仓数量
         quantity = self.calculate_position_size(price)
-        
+
+        # 期货：至少1张才能开仓
+        if self.contract_multiplier > 1 and quantity < 1:
+            logger.warning(f"资金不足，无法开仓（需至少1张合约）")
+            return
+
         # 考虑滑点
-        if direction == 1:  # 做多，买入价格略高
+        if direction == 1:
             actual_price = price * (1 + self.slippage_rate)
-        else:  # 做空，卖出价格略低
+        else:
             actual_price = price * (1 - self.slippage_rate)
-        
+
         # 计算手续费
-        commission = quantity * actual_price * self.commission_rate
+        if self.contract_multiplier > 1:
+            # 期货：固定手续费（commission_rate 用作每张合约固定费用时=0）
+            commission = quantity * actual_price * self.commission_rate * self.contract_multiplier
+        else:
+            commission = quantity * actual_price * self.commission_rate
         self.total_commission += commission
-        
+
         # 更新持仓
         self.position = Position(
             direction=direction,
@@ -232,65 +338,63 @@ class RenkoReversalStrategy:
             quantity=quantity,
             entry_time=timestamp
         )
-        
-        # 合约模式：开仓只扣除手续费，不占用保证金（保证金用于盈亏结算）
-        # 开仓手续费 = 开仓价值 × 0.0005
+
         self.balance -= commission
-        
+
         direction_text = "做多 🟢" if direction == 1 else "做空 🔴"
         logger.debug(f"开仓 | {direction_text} | "
                     f"价格: {actual_price:.2f} | "
-                    f"数量: {quantity:.6f} | "
+                    f"数量: {quantity:.4f} | "
                     f"手续费: {commission:.2f} | "
                     f"余额: {self.balance:.2f}")
     
     def close_position(self, price: float, timestamp: datetime) -> Optional[Trade]:
         """
         平仓
-        
+
         Args:
             price: 平仓价格
             timestamp: 平仓时间
-            
+
         Returns:
             交易记录
         """
         if self.position.is_empty:
             return None
-        
+
         # 考虑滑点
-        if self.position.is_long:  # 多头平仓，卖出价格略低
-            actual_price = price * (1 - self.slippage_rate)
-        else:  # 空头平仓，买入价格略高
-            actual_price = price * (1 + self.slippage_rate)
-        
-        # 计算盈亏
         if self.position.is_long:
-            # 做多：盈亏 = (卖出价 - 买入价) * 数量
-            pnl = (actual_price - self.position.entry_price) * self.position.quantity
+            actual_price = price * (1 - self.slippage_rate)
         else:
-            # 做空：盈亏 = (卖出价 - 买入价) * 数量
-            pnl = (self.position.entry_price - actual_price) * self.position.quantity
-        
-        # 平仓手续费 = 平仓价值 × 0.0005
-        commission = self.position.quantity * actual_price * self.commission_rate
+            actual_price = price * (1 + self.slippage_rate)
+
+        # 计算价差盈亏（乘以合约倍数）
+        if self.position.is_long:
+            raw_pnl = (actual_price - self.position.entry_price) * self.position.quantity * self.contract_multiplier
+        else:
+            raw_pnl = (self.position.entry_price - actual_price) * self.position.quantity * self.contract_multiplier
+
+        # 平仓手续费
+        if self.contract_multiplier > 1:
+            commission = self.position.quantity * actual_price * self.commission_rate * self.contract_multiplier
+        else:
+            commission = self.position.quantity * actual_price * self.commission_rate
         self.total_commission += commission
-        
-        # 净盈亏 = 价差盈亏 - 平仓手续费
-        net_pnl = pnl - commission
-        
-        # 记录交易前余额
+
+        net_pnl = raw_pnl - commission
         balance_before = self.balance
-        
-        # 合约模式：平仓结算盈亏
-        # 盈亏直接加减保证金余额
         self.balance += net_pnl
-        
+
+        # 每日 P&L 追踪
+        self._update_daily_tracking(timestamp)
+        if self._current_day is not None:
+            self._daily_pnl[self._current_day] = self._daily_pnl.get(self._current_day, 0.0) + net_pnl
+            self._daily_trades[self._current_day] = self._daily_trades.get(self._current_day, 0) + 1
+
         # 计算盈亏百分比（基于开仓时投入的资金）
-        invested = self.position.quantity * self.position.entry_price
+        invested = self.position.quantity * self.position.entry_price * self.contract_multiplier
         pnl_pct = net_pnl / invested if invested > 0 else 0
-        
-        # 创建交易记录
+
         self.trade_counter += 1
         trade = Trade(
             trade_id=self.trade_counter,
@@ -305,15 +409,15 @@ class RenkoReversalStrategy:
             balance_before=balance_before,
             balance_after=self.balance
         )
-        
+
         self.trades.append(trade)
-        
+
         direction_text = "做多 🟢" if self.position.is_long else "做空 🔴"
         logger.info(f"平仓 | {direction_text} | "
                    f"进场: {self.position.entry_price:.2f} → 出场: {actual_price:.2f} | "
                    f"盈亏: {net_pnl:+.2f} ({pnl_pct:+.2%}) | "
                    f"余额: {self.balance:.2f}")
-        
+
         # 清空持仓
         self.position = Position(
             direction=0,
@@ -321,31 +425,29 @@ class RenkoReversalStrategy:
             quantity=0.0,
             entry_time=None
         )
-        
+
         return trade
     
     def update_equity(self, current_price: float) -> None:
         """
         更新总权益（余额+持仓浮盈）
-        
+
         Args:
             current_price: 当前价格
         """
         if self.position.is_empty:
             self.equity = self.balance
         else:
-            # 计算持仓浮盈
             if self.position.is_long:
-                unrealized_pnl = (current_price - self.position.entry_price) * self.position.quantity
+                unrealized_pnl = (current_price - self.position.entry_price) * self.position.quantity * self.contract_multiplier
             else:
-                unrealized_pnl = (self.position.entry_price - current_price) * self.position.quantity
-            
+                unrealized_pnl = (self.position.entry_price - current_price) * self.position.quantity * self.contract_multiplier
+
             self.equity = self.balance + unrealized_pnl
-        
-        # 更新最大权益和回撤
+
         if self.equity > self.max_equity:
             self.max_equity = self.equity
-        
+
         drawdown = (self.max_equity - self.equity) / self.max_equity
         if drawdown > self.max_drawdown:
             self.max_drawdown = drawdown
@@ -410,31 +512,44 @@ class RenkoReversalStrategy:
                 'total_trades': 0,
                 'final_balance': self.balance,
                 'total_return': 0.0,
-                'total_return_pct': 0.0
+                'total_return_pct': 0.0,
+                'trades': [],
+                'daily_pnl': self._daily_pnl,
+                'daily_trades': self._daily_trades,
             }
-        
-        # 基础统计
+
         total_trades = len(self.trades)
         winning_trades = [t for t in self.trades if t.pnl > 0]
         losing_trades = [t for t in self.trades if t.pnl <= 0]
-        
+
         win_count = len(winning_trades)
         loss_count = len(losing_trades)
         win_rate = win_count / total_trades if total_trades > 0 else 0
-        
-        # 盈亏统计
+
         total_pnl = sum(t.pnl for t in self.trades)
         total_return_pct = (self.balance - self.initial_capital) / self.initial_capital
-        
+
         avg_win = np.mean([t.pnl for t in winning_trades]) if winning_trades else 0
         avg_loss = np.mean([t.pnl for t in losing_trades]) if losing_trades else 0
-        
+
         profit_factor = (
             abs(sum(t.pnl for t in winning_trades) / sum(t.pnl for t in losing_trades))
             if losing_trades and sum(t.pnl for t in losing_trades) != 0
             else float('inf') if winning_trades else 0
         )
-        
+
+        # 日均交易次数
+        if self._daily_trades:
+            avg_daily_trades = np.mean(list(self._daily_trades.values()))
+            days_with_trades = sum(1 for v in self._daily_trades.values() if v > 0)
+        else:
+            avg_daily_trades = 0
+            days_with_trades = 0
+
+        # 盈利日统计（对 Profimr 出金号有用）
+        profitable_days = sum(1 for v in self._daily_pnl.values() if v > 0)
+        profitable_days_200 = sum(1 for v in self._daily_pnl.values() if v >= 200)
+
         stats = {
             'initial_capital': self.initial_capital,
             'final_balance': self.balance,
@@ -449,10 +564,16 @@ class RenkoReversalStrategy:
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'profit_factor': profit_factor,
-            'trades': self.trades
-            , 'total_commission': self.total_commission
+            'total_commission': self.total_commission,
+            'avg_daily_trades': avg_daily_trades,
+            'days_with_trades': days_with_trades,
+            'profitable_days': profitable_days,
+            'profitable_days_200': profitable_days_200,
+            'daily_pnl': self._daily_pnl,
+            'daily_trades': self._daily_trades,
+            'trades': self.trades,
         }
-        
+
         return stats
     
     def print_statistics(self, stats: Dict) -> None:

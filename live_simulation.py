@@ -110,55 +110,40 @@ def fetch_latest_kline(symbol=SYMBOL, interval=INTERVAL):
 
 if __name__ == "__main__":
     logger.info("启动实时模拟交易系统（实时采集模式）...")
-    
-    # 1. 初始化策略类
-    class LiveRenkoTrader:
-        def __init__(self, strategy):
-            self.strategy = strategy
-            
-        def process_new_brick(self, brick):
-            """处理新砖块，判断是否需要交易"""
-            current_price = brick['brick_close']
-            timestamp = brick['timestamp']
-            
-            # 检测趋势反转
-            trend = None
-            if hasattr(self.strategy, 'detect_trend_reversal'):
-                trend = self.strategy.detect_trend_reversal(pd.DataFrame([brick]), 0)
-            
-            if trend is not None:
-                # 如果有仓位且方向不同，先平仓再开仓
-                if not self.strategy.position.is_empty and self.strategy.position.direction != trend:
-                    self.strategy.close_position(current_price, timestamp)
-                    self.strategy.open_position(trend, current_price, timestamp)
-                # 如果空仓，直接开仓
-                elif self.strategy.position.is_empty:
-                    self.strategy.open_position(trend, current_price, timestamp)
-            
-            # 更新净值
-            self.strategy.update_equity(current_price)
-        
-        def get_stats(self):
-            """获取策略统计信息"""
-            return self.strategy.calculate_statistics()
 
-    # 2. 初始化策略
+    # 1. 初始化策略
     strategy = RenkoReversalStrategy(
         initial_capital=INITIAL_CAPITAL,
         commission_rate=0.0004,
         slippage_rate=0.0001
     )
-    trader = LiveRenkoTrader(strategy)
     trade_log = []
-    
-    # 3. 获取初始历史K线数据
+
+    # 2. 获取初始历史K线数据
     logger.info(f"正在获取初始K线数据（{INTERVAL}周期）...")
     df = fetch_klines(symbol=SYMBOL, interval=INTERVAL, limit=500)
     if df.empty:
         logger.error("无法获取初始K线数据，退出系统")
         exit(1)
     logger.info(f"已获取 {len(df)} 条K线数据")
-    
+
+    # 3. 用历史数据初始化砖型图和策略状态（不开仓，只建立方向记忆）
+    renko_builder = RenkoBuilder(
+        method=RENKO_METHOD,
+        atr_period=ATR_PERIOD,
+        atr_multiplier=ATR_MULTIPLIER
+    )
+    renko_df = renko_builder.build(df)
+    last_brick_count = len(renko_df)
+
+    # 初始化策略的方向记忆（用最后两个历史砖块预热，不触发交易）
+    if len(renko_df) >= 2:
+        strategy._recent_directions = [
+            int(renko_df.iloc[-2]['direction']),
+            int(renko_df.iloc[-1]['direction'])
+        ]
+        logger.info(f"策略已用历史砖块预热，最近方向: {strategy._recent_directions}")
+
     # 4. 计算睡眠时间（根据周期）
     if INTERVAL.endswith('m'):
         sleep_sec = int(INTERVAL[:-1]) * 60
@@ -167,101 +152,91 @@ if __name__ == "__main__":
     elif INTERVAL.endswith('d'):
         sleep_sec = int(INTERVAL[:-1]) * 86400
     else:
-        sleep_sec = 60  # 默认1分钟
-    
+        sleep_sec = 60
+
     logger.info(f"开始实时模拟交易，采样周期：{INTERVAL}（每{sleep_sec}秒刷新）")
-    
+
     # 5. 主循环：实时采集并处理
     try:
-        last_brick_count = 0
         last_timestamp = None
-        
+
         while True:
-            # 实时采集最新K线
             new_kline = fetch_latest_kline(symbol=SYMBOL, interval=INTERVAL)
-            
+
             if new_kline is None:
                 logger.warning("获取最新K线失败，等待重试...")
                 time.sleep(10)
                 continue
-            
+
             # 检查是否是新K线（避免重复处理）
             if last_timestamp is not None and new_kline['timestamp'] <= last_timestamp:
                 logger.debug(f"K线未更新，等待下一周期... (当前: {new_kline['timestamp']})")
-                time.sleep(sleep_sec // 2)  # 等待半个周期再检查
+                time.sleep(sleep_sec // 2)
                 continue
-            
-            # 更新数据集
+
             last_timestamp = new_kline['timestamp']
             df = pd.concat([df, pd.DataFrame([new_kline])], ignore_index=True)
-            
-            # 保持数据集大小（最多1000条）
+
             if len(df) > 1000:
                 df = df.iloc[-1000:].reset_index(drop=True)
-            
+
             logger.info(f"采集到新K线: {new_kline['timestamp']} | Close: {new_kline['close']:.2f}")
-            
-            # 构建砖型图
-            renko_builder = RenkoBuilder(
+
+            # 重建砖型图
+            renko_builder_new = RenkoBuilder(
                 method=RENKO_METHOD,
                 atr_period=ATR_PERIOD,
                 atr_multiplier=ATR_MULTIPLIER
             )
-            renko_df = renko_builder.build(df)
-            
-            # 如果有新砖块生成
+            renko_df = renko_builder_new.build(df)
+
+            # 处理新生成的砖块（逐块推送给策略的 on_brick 方法）
             if not renko_df.empty and len(renko_df) > last_brick_count:
-                latest_brick = renko_df.iloc[-1]
-                trader.process_new_brick(latest_brick)
+                new_bricks = renko_df.iloc[last_brick_count:]
+                for _, brick in new_bricks.iterrows():
+                    signal = strategy.on_brick(brick)
+                    direction_symbol = "🟢" if brick['direction'] == 1 else "🔴"
+                    signal_text = {"open": "开仓", "reverse": "反转", "hold": "持有"}.get(signal, signal)
+                    logger.info(f"{direction_symbol} 新砖块 | 价格: {brick['brick_close']:.2f} | 信号: {signal_text}")
+
                 last_brick_count = len(renko_df)
-                
+
                 # 记录净值
-                stats = trader.get_stats()
+                stats = strategy.calculate_statistics()
                 trade_log.append({
                     'timestamp': datetime.now(),
-                    'equity': stats['final_balance'],
+                    'equity': strategy.equity,
+                    'balance': strategy.balance,
                     'total_trades': stats['total_trades']
                 })
-                
+
                 # ===== 实时监控窗口输出 =====
                 print("\n" + "="*60)
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Real-Time Monitor")
                 win_rate = stats.get('win_rate', 0)
-                print(f"Equity: ${stats['final_balance']:,.2f} | Trades: {stats['total_trades']} | Win Rate: {win_rate*100:.2f}%")
-                print(f"Current Position: {'LONG' if strategy.position.is_long else 'SHORT' if strategy.position.is_short else 'NONE'} | Size: {strategy.position.quantity:.6f}")
-                print(f"Bricks Count: {len(renko_df)} | Latest Price: {new_kline['close']:.2f}")
+                print(f"Equity: ${strategy.equity:,.2f} | Balance: ${strategy.balance:,.2f} | Trades: {stats['total_trades']} | Win Rate: {win_rate*100:.2f}%")
+                print(f"Position: {'LONG' if strategy.position.is_long else 'SHORT' if strategy.position.is_short else 'NONE'} | Size: {strategy.position.quantity:.4f}")
+                print(f"Bricks: {len(renko_df)} | Latest Close: {new_kline['close']:.2f}")
                 print("-"*60)
-                print("Recent Trades:")
                 trades = stats.get('trades', [])
-                
-                # 检测是否有新交易（触发提示音）
-                if not hasattr(strategy, '_last_trade_count'):
-                    strategy._last_trade_count = 0
-                new_trade_count = len(trades)
-                if new_trade_count > strategy._last_trade_count:
-                    print('\a', end='')  # 提示音
-                strategy._last_trade_count = new_trade_count
-                
                 if trades:
-                    for t in trades[-5:]:  # 显示最近5笔交易
+                    print("Recent Trades (last 5):")
+                    for t in trades[-5:]:
                         direction_str = 'LONG' if t.direction == 1 else 'SHORT'
-                        print(f"#{t.trade_id} | {direction_str} | Entry: {t.entry_price:.2f} @ {t.entry_time} | Exit: {t.exit_price:.2f} @ {t.exit_time} | PnL: {t.pnl:+.2f} | Balance: {t.balance_after:.2f}")
+                        print(f"  #{t.trade_id} {direction_str} | In:{t.entry_price:.2f} Out:{t.exit_price:.2f} | PnL:{t.pnl:+.2f} | Bal:{t.balance_after:.2f}")
                 else:
                     print("No trades yet.")
                 print("="*60)
-            
-            # 等待下一个周期
+
             time.sleep(sleep_sec)
-            
+
     except KeyboardInterrupt:
         logger.info("模拟交易系统已停止。保存结果...")
-        
-        # 保存净值曲线
+
         if trade_log:
             pd.DataFrame(trade_log).to_csv('data/processed/live_simulation_equity.csv', index=False)
             logger.info("净值曲线已保存到 data/processed/live_simulation_equity.csv")
-        
-        # 保存交易明细
+
         trades = strategy.trades if hasattr(strategy, 'trades') else []
         if trades:
             trades_df = pd.DataFrame([
@@ -280,8 +255,8 @@ if __name__ == "__main__":
                 } for t in trades
             ])
             trades_df.to_csv('data/processed/live_simulation_trades.csv', index=False)
-            logger.info("全部历史交易明细已保存到 data/processed/live_simulation_trades.csv")
+            logger.info("交易记录已保存到 data/processed/live_simulation_trades.csv")
         else:
             logger.info("无历史交易可保存。")
-        
+
         logger.info("系统退出完成。")
