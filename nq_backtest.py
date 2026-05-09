@@ -46,11 +46,14 @@ PROFIT_TARGET    = 3_000.0    # 挑战号盈利目标 $3000
 WITHDRAWAL_MIN_DAYS   = 5     # 出金号：连续盈利天数
 WITHDRAWAL_MIN_DAILY  = 200.0 # 出金号：每日最低盈利 $200
 
-# 交易时段（美东时间 UTC-5/UTC-4，Globex 日盘）
-# 9:30 ET = 14:30 UTC（冬令时），9:30 ET = 13:30 UTC（夏令时）
-# 使用 UTC 13:30-20:00 覆盖 RTH（Regular Trading Hours）
-SESSION_START_UTC = 13   # 9:30 ET ≈ 13:30 UTC（夏令时）
-SESSION_END_UTC   = 20   # 4:00 PM ET ≈ 20:00 UTC
+# 交易时段（中国标准时间 CST = UTC+8）
+# 06:10 CST → 22:10 UTC（前一日）；凌晨 04:00 CST → 20:00 UTC（跨午夜会话）
+# CME Globex MNQ 周一至周五交易
+SESSION_START_UTC_HOUR = 22   # 06:10 CST = 22:10 UTC
+SESSION_START_UTC_MIN  = 10
+SESSION_END_UTC_HOUR   = 20   # 04:00 CST = 20:00 UTC
+SESSION_END_UTC_MIN    = 0
+SESSION_WEEKDAYS_ONLY  = True  # 仅周一至周五
 
 # ============================================================
 # 参数扫描空间
@@ -78,12 +81,22 @@ OUTPUT_DIR = Path('batch_results')
 # ============================================================
 
 def filter_rth(df: pd.DataFrame) -> pd.DataFrame:
-    """只保留 RTH（9:30-16:00 ET ≈ 13:30-20:00 UTC）的 K 线"""
+    """只保留交易时段（周一至周五 06:10-04:00 CST ≈ 22:10-20:00 UTC，跨午夜）的 K 线"""
     if 'timestamp' not in df.columns:
         return df
     ts = pd.to_datetime(df['timestamp'])
-    mask = (ts.dt.hour >= SESSION_START_UTC) & (ts.dt.hour < SESSION_END_UTC)
-    return df[mask].reset_index(drop=True)
+
+    # 工作日过滤（0=周一 … 4=周五；5=周六, 6=周日）
+    weekday_mask = ts.dt.weekday < 5
+
+    # 时间过滤（分钟精度，跨午夜：22:10 UTC → 20:00 UTC）
+    minutes  = ts.dt.hour * 60 + ts.dt.minute
+    start_m  = SESSION_START_UTC_HOUR * 60 + SESSION_START_UTC_MIN
+    end_m    = SESSION_END_UTC_HOUR   * 60 + SESSION_END_UTC_MIN
+    # 跨午夜：start_m > end_m → 在时段内当 time >= start 或 time < end
+    time_mask = (minutes >= start_m) | (minutes < end_m)
+
+    return df[weekday_mask & time_mask].reset_index(drop=True)
 
 
 def run_single_backtest(
@@ -145,8 +158,11 @@ def run_single_backtest(
         max_contracts=MAX_CONTRACTS,
         margin_per_contract=MARGIN_PER_CONTRACT,
         max_daily_loss=MAX_DAILY_LOSS,
-        session_start_hour=SESSION_START_UTC,
-        session_end_hour=SESSION_END_UTC,
+        session_start_hour=SESSION_START_UTC_HOUR,
+        session_start_minute=SESSION_START_UTC_MIN,
+        session_end_hour=SESSION_END_UTC_HOUR,
+        session_end_minute=SESSION_END_UTC_MIN,
+        session_weekdays_only=SESSION_WEEKDAYS_ONLY,
         reversal_count=reversal_count,
     )
 

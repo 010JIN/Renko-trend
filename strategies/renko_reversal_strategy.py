@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import datetime, date, time as dtime
 from loguru import logger
 
 
@@ -131,8 +131,11 @@ class RenkoReversalStrategy:
         max_contracts: int = 1,           # 最大持仓合约数
         margin_per_contract: float = 0.0, # 每张合约保证金（0=按名义价值计算）
         max_daily_loss: float = 0.0,      # 每日最大亏损限额（0=不限制）
-        session_start_hour: Optional[int] = None,  # 交易时段开始小时（UTC）
-        session_end_hour: Optional[int] = None,    # 交易时段结束小时（UTC）
+        session_start_hour: Optional[int] = None,   # 交易时段开始小时（UTC）
+        session_start_minute: int = 0,              # 交易时段开始分钟（UTC）
+        session_end_hour: Optional[int] = None,     # 交易时段结束小时（UTC）
+        session_end_minute: int = 0,                # 交易时段结束分钟（UTC）
+        session_weekdays_only: bool = False,         # 是否仅周一至周五交易
         reversal_count: int = 2,          # 确立趋势所需的连续同向砖块数（默认2）
     ):
         """
@@ -147,8 +150,11 @@ class RenkoReversalStrategy:
             margin_per_contract: 每张合约所需保证金（美元）。0 表示用名义价值计算。
                                   例如 MNQ 日内保证金约 $500-1500，可设 1000。
             max_daily_loss: 每日最大亏损限额，超过后当天不再开仓（0=不限）
-            session_start_hour: 只在此小时（UTC）之后开仓，None=不限
-            session_end_hour: 只在此小时（UTC）之前开仓，None=不限
+            session_start_hour: 交易时段开始小时（UTC），None=不限
+            session_start_minute: 交易时段开始分钟（UTC），默认0
+            session_end_hour: 交易时段结束小时（UTC），None=不限
+            session_end_minute: 交易时段结束分钟（UTC），默认0
+            session_weekdays_only: True=仅周一至周五开仓，False=不限制
             reversal_count: 确立趋势所需的连续同向砖块数（默认2）。
                             1=每块砖即触发；2=连续2块同向；3=连续3块同向（更保守）。
         """
@@ -160,7 +166,10 @@ class RenkoReversalStrategy:
         self.margin_per_contract = margin_per_contract
         self.max_daily_loss = max_daily_loss
         self.session_start_hour = session_start_hour
+        self.session_start_minute = int(session_start_minute)
         self.session_end_hour = session_end_hour
+        self.session_end_minute = int(session_end_minute)
+        self.session_weekdays_only = bool(session_weekdays_only)
         self.reversal_count = max(1, int(reversal_count))
 
         # 账户状态
@@ -222,22 +231,40 @@ class RenkoReversalStrategy:
         return daily_loss >= self.max_daily_loss
 
     def _is_in_session(self, timestamp: datetime) -> bool:
-        """检查时间戳是否在交易时段内"""
+        """检查时间戳是否在交易时段内（支持分钟精度、跨午夜、仅工作日）"""
         if self.session_start_hour is None and self.session_end_hour is None:
-            return True
+            if not self.session_weekdays_only:
+                return True
         if timestamp is None:
             return True
         ts = timestamp if isinstance(timestamp, datetime) else pd.Timestamp(timestamp).to_pydatetime()
-        hour = ts.hour
+
+        # 工作日过滤（Mon=0 … Fri=4；Sat=5, Sun=6 为非交易日）
+        if self.session_weekdays_only and ts.weekday() >= 5:
+            return False
+
+        if self.session_start_hour is None and self.session_end_hour is None:
+            return True
+
+        # 以分钟数表示当前时刻及时段边界，便于跨午夜比较
+        current = ts.hour * 60 + ts.minute
+
         if self.session_start_hour is not None and self.session_end_hour is not None:
-            if self.session_start_hour < self.session_end_hour:
-                return self.session_start_hour <= hour < self.session_end_hour
-            else:  # 跨午夜
-                return hour >= self.session_start_hour or hour < self.session_end_hour
+            start = self.session_start_hour * 60 + self.session_start_minute
+            end   = self.session_end_hour   * 60 + self.session_end_minute
+            if start <= end:
+                return start <= current < end
+            else:  # 跨午夜（如 22:10 → 20:00 UTC）
+                return current >= start or current < end
+
         if self.session_start_hour is not None:
-            return hour >= self.session_start_hour
+            start = self.session_start_hour * 60 + self.session_start_minute
+            return current >= start
+
         if self.session_end_hour is not None:
-            return hour < self.session_end_hour
+            end = self.session_end_hour * 60 + self.session_end_minute
+            return current < end
+
         return True
 
     def detect_trend_reversal(
