@@ -90,21 +90,26 @@ class RenkoReversalStrategy:
         """
         推送一根砖块，自动检测趋势、开平仓，返回信号字符串（买/卖/平/无操作）
         brick: 单根砖块（Series或dict）
+
+        使用 self.reversal_count 控制确立趋势所需的连续同向砖块数。
         """
-        # 兼容Series或dict
         direction = brick['direction']
         current_price = brick['brick_close']
         timestamp = brick['timestamp']
-        # 维护最近两根方向
+
+        # 维护最近 reversal_count 根砖块方向
         if not hasattr(self, '_recent_directions'):
             self._recent_directions = []
-        self._recent_directions.append(direction)
-        if len(self._recent_directions) > 2:
+        self._recent_directions.append(int(direction))
+        if len(self._recent_directions) > self.reversal_count:
             self._recent_directions.pop(0)
-        # 检测趋势
+
+        # 检测趋势：最近 reversal_count 根全部同向
         trend = None
-        if len(self._recent_directions) == 2 and self._recent_directions[0] == self._recent_directions[1]:
-            trend = self._recent_directions[1]
+        if (len(self._recent_directions) == self.reversal_count
+                and len(set(self._recent_directions)) == 1):
+            trend = self._recent_directions[-1]
+
         signal = 'hold'
         if trend is not None:
             if not self.position.is_empty and self.position.direction != trend:
@@ -122,11 +127,13 @@ class RenkoReversalStrategy:
         initial_capital: float = 10000.0,
         commission_rate: float = 0.0004,  # 手续费率 0.04%
         slippage_rate: float = 0.0001,    # 滑点 0.01%
-        contract_multiplier: float = 1.0, # 合约点值倍数（NQ E-mini=20, 加密货币=1）
+        contract_multiplier: float = 1.0, # 合约点值倍数（MNQ=2, NQ=20, 加密货币=1）
         max_contracts: int = 1,           # 最大持仓合约数
+        margin_per_contract: float = 0.0, # 每张合约保证金（0=按名义价值计算）
         max_daily_loss: float = 0.0,      # 每日最大亏损限额（0=不限制）
         session_start_hour: Optional[int] = None,  # 交易时段开始小时（UTC）
         session_end_hour: Optional[int] = None,    # 交易时段结束小时（UTC）
+        reversal_count: int = 2,          # 确立趋势所需的连续同向砖块数（默认2）
     ):
         """
         初始化策略
@@ -135,20 +142,26 @@ class RenkoReversalStrategy:
             initial_capital: 初始资金
             commission_rate: 手续费率（默认0.04%，加密货币适用；期货按固定$/张设置）
             slippage_rate: 滑点率
-            contract_multiplier: 合约点值（如 NQ E-mini = 20 USD/点，加密货币 = 1）
+            contract_multiplier: 合约点值（如 MNQ Micro E-mini = 2 USD/点，NQ = 20 USD/点，加密货币 = 1）
             max_contracts: 最大持仓合约数
+            margin_per_contract: 每张合约所需保证金（美元）。0 表示用名义价值计算。
+                                  例如 MNQ 日内保证金约 $500-1500，可设 1000。
             max_daily_loss: 每日最大亏损限额，超过后当天不再开仓（0=不限）
             session_start_hour: 只在此小时（UTC）之后开仓，None=不限
             session_end_hour: 只在此小时（UTC）之前开仓，None=不限
+            reversal_count: 确立趋势所需的连续同向砖块数（默认2）。
+                            1=每块砖即触发；2=连续2块同向；3=连续3块同向（更保守）。
         """
         self.initial_capital = initial_capital
         self.commission_rate = commission_rate
         self.slippage_rate = slippage_rate
         self.contract_multiplier = contract_multiplier
         self.max_contracts = max_contracts
+        self.margin_per_contract = margin_per_contract
         self.max_daily_loss = max_daily_loss
         self.session_start_hour = session_start_hour
         self.session_end_hour = session_end_hour
+        self.reversal_count = max(1, int(reversal_count))
 
         # 账户状态
         self.balance = initial_capital  # 当前余额
@@ -181,7 +194,8 @@ class RenkoReversalStrategy:
         logger.info(f"初始化砖型图反转策略: 本金={initial_capital}, "
                    f"手续费={commission_rate:.4%}, 滑点={slippage_rate:.4%}, "
                    f"合约倍数={contract_multiplier}, 最大合约数={max_contracts}, "
-                   f"每日限损={max_daily_loss}")
+                   f"每张保证金={margin_per_contract}, 每日限损={max_daily_loss}, "
+                   f"反转确认数={reversal_count}")
     
     def _update_daily_tracking(self, timestamp: datetime) -> None:
         """每日跟踪初始化"""
@@ -233,28 +247,28 @@ class RenkoReversalStrategy:
     ) -> Optional[int]:
         """
         检测趋势反转
-        
-        规则：连续2个同向砖块 = 趋势确立
-        
+
+        规则：连续 `reversal_count` 个同向砖块 = 趋势确立
+
         Args:
             renko_df: 砖型图数据
             current_idx: 当前砖块索引
-            
+
         Returns:
             趋势方向：1=上涨, -1=下跌, None=无趋势或数据不足
         """
-        # 至少需要2个砖块
-        if current_idx < 1:
+        n = self.reversal_count
+        # 至少需要 n 个砖块
+        if current_idx < n - 1:
             return None
-        
-        # 获取当前和前一个砖块的方向
-        current_direction = renko_df.iloc[current_idx]['direction']
-        prev_direction = renko_df.iloc[current_idx - 1]['direction']
-        
-        # 连续2个同向砖块 = 趋势确立
-        if current_direction == prev_direction:
-            return current_direction
-        
+
+        # 获取最近 n 个砖块的方向
+        directions = [int(renko_df.iloc[current_idx - i]['direction']) for i in range(n)]
+
+        # 全部相同则确立趋势
+        if len(set(directions)) == 1:
+            return directions[0]
+
         return None
     
     def calculate_position_size(self, price: float) -> float:
@@ -262,21 +276,32 @@ class RenkoReversalStrategy:
         计算开仓数量
 
         加密货币模式（contract_multiplier=1）：
-          quantity = balance / price（碎股）
+          quantity = balance / price（碎股，全仓）
+
         期货模式（contract_multiplier>1）：
-          quantity = min(max_contracts, floor(balance / (price * contract_multiplier)))
-          至少1张（资金不足时不开仓返回0）
+          若 margin_per_contract > 0：
+            quantity = min(max_contracts, floor(balance / margin_per_contract))
+          否则（margin_per_contract=0，按名义价值）：
+            quantity = min(max_contracts, floor(balance / (price * contract_multiplier)))
+          两种情况均至少为 1，资金不足时返回 0。
+
+          示例（MNQ，price=20000，mult=2，margin=1000）：
+            balance=50000 → qty = min(30, floor(50000/1000)) = min(30,50) = 30
 
         Args:
             price: 开仓价格
 
         Returns:
-            开仓数量（期货=合约张数，加密货币=币数）
+            开仓数量（期货=合约张数整数，加密货币=币数）
         """
         if self.contract_multiplier > 1:
-            # 期货：按合约张数，向下取整
-            contract_value = price * self.contract_multiplier
-            qty = min(self.max_contracts, int(self.balance / contract_value))
+            if self.margin_per_contract > 0:
+                # 基于保证金计算（日内期货）
+                qty = min(self.max_contracts, int(self.balance / self.margin_per_contract))
+            else:
+                # 基于名义价值（保守）
+                contract_value = price * self.contract_multiplier
+                qty = min(self.max_contracts, int(self.balance / contract_value))
             return float(qty)
         else:
             # 加密货币：全仓，预留手续费

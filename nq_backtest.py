@@ -40,6 +40,7 @@ from fetch_nq_data import fetch_nq_data, save_nq_data, load_nq_data
 INITIAL_CAPITAL  = 50_000.0   # 50K 账户
 CONTRACT_MULT    = 2.0         # MNQ (Micro E-mini NQ): $2 per point（NQ E-mini 为 $20/点）
 MAX_CONTRACTS    = 30          # 最大 30 张 MNQ
+MARGIN_PER_CONTRACT = 1_000.0 # MNQ 日内保证金约 $500-1500/张，取 $1000
 MAX_DAILY_LOSS   = 2_000.0    # EOD 回撤限额 $2000
 PROFIT_TARGET    = 3_000.0    # 挑战号盈利目标 $3000
 WITHDRAWAL_MIN_DAYS   = 5     # 出金号：连续盈利天数
@@ -57,14 +58,17 @@ SESSION_END_UTC   = 20   # 4:00 PM ET ≈ 20:00 UTC
 INTERVALS = ['5m', '15m', '1h']   # 数据周期
 
 PARAM_GRID = {
-    # 固定砖块法（NQ 点数）
-    'fixed': [10, 15, 20, 25, 30, 40, 50, 75, 100],
+    # 固定砖块法（NQ 点数）— MNQ 价格在 17000-22000，合理砖块 5-100 点
+    'fixed': [5, 10, 15, 20, 25, 30, 40, 50, 75, 100],
     # ATR 法：(period, multiplier)
     'atr':   [(14, 0.5), (14, 0.75), (14, 1.0), (14, 1.5), (14, 2.0),
-              (7, 0.5),  (7, 1.0),   (7, 1.5)],
+              (7, 0.5),  (7, 0.75),  (7, 1.0),  (7, 1.5)],
     # 百分比法
     'percentage': [0.001, 0.0015, 0.002, 0.0025, 0.003],
 }
+
+# 反转确认砖块数（1=每根砖即触发，2=连续2根同向，3=保守型）
+REVERSAL_COUNTS = [1, 2, 3]
 
 OUTPUT_DIR = Path('batch_results')
 
@@ -87,6 +91,7 @@ def run_single_backtest(
     method: str,
     param,
     interval: str,
+    reversal_count: int = 2,
     filter_session: bool = True,
 ) -> dict:
     """
@@ -97,10 +102,11 @@ def run_single_backtest(
         method: 砖块计算方法
         param: 方法参数
         interval: K 线周期标签
+        reversal_count: 确立趋势所需的连续同向砖块数（1/2/3）
         filter_session: 是否过滤 RTH 时段
 
     Returns:
-        统计字典
+        统计字典，None 表示无效
     """
     data = filter_rth(df) if filter_session else df
 
@@ -127,56 +133,56 @@ def run_single_backtest(
         logger.warning(f"砖型图构建失败 ({method} {param}): {e}")
         return None
 
-    if len(renko_df) < 4:
+    if len(renko_df) < reversal_count + 2:
         return None
 
-    # 运行策略
+    # 运行策略（MNQ 使用保证金定仓）
     strategy = RenkoReversalStrategy(
         initial_capital=INITIAL_CAPITAL,
-        commission_rate=0.0,          # MNQ 佣金约 $0.35-0.50/张/单边，这里忽略
-        slippage_rate=0.0,            # 滑点对应 0.25 点 tick，由 contract_mult 反映
+        commission_rate=0.0,                 # MNQ 佣金约 $0.35-0.50/张/单边，这里忽略
+        slippage_rate=0.0,                   # 滑点对应 0.25 点 tick = $0.50/张
         contract_multiplier=CONTRACT_MULT,
         max_contracts=MAX_CONTRACTS,
+        margin_per_contract=MARGIN_PER_CONTRACT,
         max_daily_loss=MAX_DAILY_LOSS,
         session_start_hour=SESSION_START_UTC,
         session_end_hour=SESSION_END_UTC,
+        reversal_count=reversal_count,
     )
 
     try:
         stats = strategy.run_backtest(renko_df)
     except Exception as e:
-        logger.warning(f"回测失败 ({method} {param}): {e}")
+        logger.warning(f"回测失败 ({method} {param} rc={reversal_count}): {e}")
         return None
 
     if stats['total_trades'] == 0:
         return None
 
     # 每日统计
-    daily_pnl = stats.get('daily_pnl', {})
+    daily_pnl    = stats.get('daily_pnl', {})
     daily_trades = stats.get('daily_trades', {})
 
-    days_total = len(daily_pnl)
-    days_profit = sum(1 for v in daily_pnl.values() if v > 0)
-    days_loss   = sum(1 for v in daily_pnl.values() if v < 0)
+    days_total    = len(daily_pnl)
+    days_profit   = sum(1 for v in daily_pnl.values() if v > 0)
+    days_loss     = sum(1 for v in daily_pnl.values() if v < 0)
     days_over_200 = sum(1 for v in daily_pnl.values() if v >= WITHDRAWAL_MIN_DAILY)
 
-    avg_daily_pnl    = np.mean(list(daily_pnl.values())) if daily_pnl else 0
+    avg_daily_pnl         = np.mean(list(daily_pnl.values())) if daily_pnl else 0
     max_daily_loss_actual = min(list(daily_pnl.values())) if daily_pnl else 0
-    avg_daily_trades = np.mean(list(daily_trades.values())) if daily_trades else 0
+    avg_daily_trades      = np.mean(list(daily_trades.values())) if daily_trades else 0
 
-    # 检查 Profimr 挑战达成条件
-    profit_target_hit = (stats['total_return'] >= PROFIT_TARGET)
-    # 日均回撤 < $2000（用最大单日亏损估计）
-    daily_loss_ok = (abs(max_daily_loss_actual) <= MAX_DAILY_LOSS)
-    # 出金号：连续5日盈利 ≥ $200
+    # Profimr 条件评估
+    profit_target_hit  = (stats['total_return'] >= PROFIT_TARGET)
+    daily_loss_ok      = (abs(max_daily_loss_actual) <= MAX_DAILY_LOSS)
     withdrawal_days_ok = (days_over_200 >= WITHDRAWAL_MIN_DAYS)
 
-    # 日内交易次数适合度（目标 3-10 笔/日）
-    in_range = (3 <= avg_daily_trades <= 10)
+    in_range         = (3 <= avg_daily_trades <= 10)
     trade_freq_score = max(0, 1 - abs(avg_daily_trades - 6.5) / 6.5)
 
     result = {
         'interval': interval,
+        'reversal_count': reversal_count,
         'method': method,
         'param': str(param),
         'param_label': param_label,
@@ -251,18 +257,22 @@ def _composite_score(stats: dict, avg_daily_trades: float, days_over_200: int) -
 # 主流程
 # ============================================================
 
-def run_nq_backtest(intervals=None, auto_download=True):
+def run_nq_backtest(intervals=None, reversal_counts=None, auto_download=True):
     """
-    运行 NQ 参数扫描回测
+    运行 MNQ 参数扫描回测（包含砖块大小 × 反转确认数）
 
     Args:
         intervals: 要测试的周期列表，默认为 INTERVALS
+        reversal_counts: 反转确认砖块数列表，默认为 REVERSAL_COUNTS
         auto_download: 若本地无数据则自动下载
     """
-    intervals = intervals or INTERVALS
+    intervals      = intervals      or INTERVALS
+    reversal_counts = reversal_counts or REVERSAL_COUNTS
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     all_results = []
+    total_combos = len(intervals) * sum(len(v) for v in PARAM_GRID.values()) * len(reversal_counts)
+    logger.info(f"总参数组合数: {total_combos}")
 
     for interval in intervals:
         logger.info(f"\n{'='*60}")
@@ -285,20 +295,24 @@ def run_nq_backtest(intervals=None, auto_download=True):
 
         logger.info(f"数据: {len(df):,} 条 | {df['timestamp'].min()} → {df['timestamp'].max()}")
 
-        # 参数扫描
-        for method, params in PARAM_GRID.items():
-            for param in params:
-                result = run_single_backtest(df, method=method, param=param, interval=interval)
-                if result:
-                    all_results.append(result)
-                    logger.info(
-                        f"  {method:<12} param={str(param):<12} "
-                        f"trades={result['total_trades']:>4} "
-                        f"avg_daily={result['avg_daily_trades']:>4.1f} "
-                        f"ret={result['total_return_pct']:>+7.2f}% "
-                        f"dd={result['max_drawdown_pct']:>5.2f}% "
-                        f"score={result['composite_score']:>5.1f}"
+        # 三维参数扫描：砖块方法 × 砖块参数 × 反转确认数
+        for rc in reversal_counts:
+            for method, params in PARAM_GRID.items():
+                for param in params:
+                    result = run_single_backtest(
+                        df, method=method, param=param,
+                        interval=interval, reversal_count=rc
                     )
+                    if result:
+                        all_results.append(result)
+                        logger.info(
+                            f"  rc={rc} {method:<12} param={str(param):<12} "
+                            f"trades={result['total_trades']:>4} "
+                            f"daily={result['avg_daily_trades']:>4.1f} "
+                            f"ret={result['total_return_pct']:>+7.2f}% "
+                            f"dd={result['max_drawdown_pct']:>5.2f}% "
+                            f"score={result['composite_score']:>5.1f}"
+                        )
 
     if not all_results:
         logger.error("没有有效的回测结果")
