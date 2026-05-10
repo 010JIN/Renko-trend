@@ -355,14 +355,71 @@ viz.plot_backtest_results(results)
 ## 开发路线图
 
 - [x] 基础项目结构
-- [x] 砖型图构建器
-- [ ] 趋势过滤器实现
-- [ ] 信号生成器
-- [ ] 回测引擎
-- [ ] 实时交易接口
-- [ ] Web界面
-- [ ] 策略优化工具
-- [ ] 风险监控系统
+- [x] 砖型图构建器（固定 / ATR / 百分比 / 对数百分比）
+- [x] 砖型图反转策略（含合约模式、每日限损、时段过滤）
+- [x] NQ 期货批量回测（nq_backtest.py + nq_report.py）
+- [x] MNQ 实时模拟交易（live_simulation_mnq.py）
+- [x] 多账户实时模拟（multi_account_live_simulation.py）
+- [ ] Web 可视化界面
+- [ ] 策略参数自动优化工具
+- [ ] 风险监控系统（实盘告警）
+
+## NQ / MNQ 期货使用指南
+
+### 合约规格（Micro NQ E-mini，MNQ）
+
+| 参数 | 值 |
+|------|-----|
+| 点值 | $2 / 点 |
+| 最小跳动 | 0.25 点 = $0.50 / 张 |
+| 最大持仓 | 30 张（日内保证金约 $1,000 / 张）|
+| 典型风险 | 10 点止损 × 30 张 = $600 |
+
+### 交易时段（CME Globex）
+
+| 时区 | 开始 | 结束 | 备注 |
+|------|------|------|------|
+| 北京时间 (CST) | 06:10 | 04:00（次日）| 周一开盘–周六凌晨关闭 |
+| UTC | 22:10（前一日）| 20:00 | 跨午夜会话 |
+
+### Profimr 50K 账户挑战参数
+
+| 规则 | 值 |
+|------|-----|
+| 初始资金 | $50,000 |
+| 每日最大回撤 | $2,000（相对当日开盘余额）|
+| 挑战号盈利目标 | $3,000 总盈利 |
+| 出金号 | 连续 5 个盈利日，每日 ≥ $200 |
+
+### 快速开始 NQ 模拟交易
+
+```bash
+# 1. 安装依赖（需要 yfinance）
+pip install -r requirements.txt
+
+# 2. 可选：先下载历史数据 & 运行回测，筛选最优参数
+python fetch_nq_data.py          # 下载 NQ=F 历史K线
+python nq_backtest.py            # 批量回测（5m / 15m / 1h，ATR + 固定法）
+python nq_report.py              # 生成回测报告，输出最优参数
+
+# 3. 启动实时模拟（5 分钟周期，ATR 法，100 根K线预热）
+python live_simulation_mnq.py
+
+# 按 Ctrl+C 停止，自动保存交易记录到 data/processed/
+```
+
+### 参数调整
+
+编辑 `live_simulation_mnq.py` 顶部常量，或直接修改 `config/config.yaml` 中的 `mnq` 区块：
+
+```yaml
+mnq:
+  interval: '5m'           # 改为 '15m' 使用 15 分钟周期
+  renko_method: 'atr'      # 改为 'fixed' 使用固定砖块
+  atr_multiplier: 1.0      # 调小 → 砖块更小，交易更频繁
+  fixed_brick_size: 20.0   # 固定法砖块大小（NQ 点数）
+  reversal_count: 2        # 1=每砖触发，2=两砖确认，3=保守型
+```
 
 ## 贡献指南
 

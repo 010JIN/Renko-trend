@@ -1,5 +1,6 @@
 """
-真实模拟交易脚本 - 逐步推送K线数据，实时生成砖块并输出交易信号
+砖型图反转策略回测脚本
+逐步推送K线数据，实时生成砖块并输出交易信号
 """
 
 import pandas as pd
@@ -156,6 +157,34 @@ def compare_different_brick_methods(df: pd.DataFrame):
     return results
 
 
+def build_renko(df: pd.DataFrame, renko_cfg: dict) -> pd.DataFrame:
+    """从配置构建砖型图"""
+    builder = RenkoBuilder(
+        method=renko_cfg.get('method', 'fixed'),
+        brick_size=renko_cfg.get('brick_size', 200.0),
+        atr_period=renko_cfg.get('atr_period', 14),
+        atr_multiplier=renko_cfg.get('atr_multiplier', 2.0),
+        percentage=renko_cfg.get('percentage', 0.005),
+        log_base=renko_cfg.get('log_base', 10.0),
+        use_wicks=renko_cfg.get('use_wicks', False)
+    )
+    renko_df = builder.build(df)
+    logger.info(f"砖型图构建完成：{len(df)} 条K线 → {len(renko_df)} 个砖块")
+    return renko_df
+
+
+def run_strategy_backtest(renko_df: pd.DataFrame, initial_capital: float = 10000.0) -> dict:
+    """运行策略回测并返回统计结果"""
+    strategy = RenkoReversalStrategy(
+        initial_capital=initial_capital,
+        commission_rate=0.0004,
+        slippage_rate=0.0001
+    )
+    stats = strategy.run_backtest(renko_df)
+    strategy.print_statistics(stats)
+    return stats
+
+
 def main():
     """主函数"""
     try:
@@ -169,11 +198,11 @@ def main():
         renko_cfg = config.get('renko', {})
         data_cfg = config.get('data', {})
 
-        # 1. 加载历史数据（symbol、date可从配置读取或默认）
+        # 1. 加载历史数据（symbol、interval 可从配置读取）
         logger.info("\n【步骤1】加载历史数据")
         symbol = data_cfg.get('symbol', 'BTCUSDT')
-        # date可按需处理，这里仍用默认
-        df = load_data(symbol=symbol, date='20251211')
+        interval = data_cfg.get('interval', '1m')
+        df = load_data(symbol=symbol, interval=interval)
 
         # 2. 构建砖型图（所有参数从配置文件）
         logger.info("\n【步骤2】构建砖型图")

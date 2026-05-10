@@ -42,6 +42,32 @@ python main.py --symbol BTC/USDT --days 30
 python main.py --symbol ETH/USDT --days 7
 ```
 
+### 选项3：NQ / MNQ 期货回测 & 模拟（Profimr 50K）
+
+```bash
+# 1. 下载 NQ=F 历史K线（需联网，使用 yfinance）
+python fetch_nq_data.py
+
+# 2. 批量回测：遍历 5m / 15m / 1h + ATR / 固定砖块，找最优参数
+python nq_backtest.py
+
+# 3. 生成可读报告（最优参数排名 + Profimr 条件评估）
+python nq_report.py
+
+# 4. 启动 MNQ 实时模拟交易（Profimr 50K 参数，100 根K线预热）
+python live_simulation_mnq.py
+# 按 Ctrl+C 停止，交易记录自动保存到 data/processed/
+```
+
+**MNQ 合约规格备忘**：
+
+| 参数 | 值 |
+|------|-----|
+| 点值 | $2 / 点（MNQ Micro）|
+| 交易时段（北京时间）| 周一 06:10 → 周六 04:00（跨午夜）|
+| 每日限损（Profimr）| $2,000 |
+| 挑战目标 | 盈利 $3,000 |
+
 ## 第三步：查看结果
 
 分析完成后，结果保存在：

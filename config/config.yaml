@@ -1,4 +1,43 @@
 
+# ============================================================
+# MNQ 期货配置（Profimr 50K 账户 — Micro NQ E-mini）
+# ============================================================
+mnq:
+  ticker: 'NQ=F'              # yfinance 纳斯达克期货连续合约（NQ=F 与 MNQ=F 同价）
+  interval: '5m'              # 采集周期：'5m' 或 '15m'
+
+  # 合约规格
+  contract_multiplier: 2.0    # 1 点 = $2（MNQ Micro；NQ E-mini 为 $20）
+  max_contracts: 30           # 最大持仓张数
+  margin_per_contract: 1000.0 # 日内保证金约 $500–1500/张，取 $1000
+
+  # Profimr 账户挑战参数
+  initial_capital: 50000.0    # 50K 账户
+  max_daily_loss: 2000.0      # EOD 最大回撤 $2000
+  profit_target: 3000.0       # 挑战号总盈利目标 $3000
+  withdrawal_min_days: 5      # 出金号：连续盈利天数
+  withdrawal_min_daily: 200.0 # 出金号：每日最低盈利 $200
+
+  # 交易时段（UTC）：Mon–Fri 22:10 → 20:00（跨午夜 = 北京时间 06:10 → 04:00）
+  session_start_hour: 22
+  session_start_minute: 10
+  session_end_hour: 20
+  session_end_minute: 0
+  session_weekdays_only: true
+
+  # 砖型图参数
+  renko_method: 'atr'         # 'atr' 或 'fixed'
+  atr_period: 14
+  atr_multiplier: 1.0         # ATR 法倍数（建议 0.5–2.0）
+  fixed_brick_size: 20.0      # 固定法砖块大小（NQ 点数）
+  reversal_count: 2           # 趋势确认所需连续同向砖块数
+
+  # 实时模拟参数
+  warmup_bars: 100            # 启动预热历史K线数
+
+# ============================================================
+# 加密货币数据源配置（Binance）
+# ============================================================
 # 数据源配置
 data:
   exchange: binance
