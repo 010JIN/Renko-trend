@@ -18,6 +18,38 @@ accounts:
       atr_period: 14
       atr_multiplier: 2.0
     initial_capital: 10000
-  
+
+  # MNQ 期货账户示例（Profimr 50K 挑战）
+  # 运行方式：python live_simulation_mnq.py
+  # 此处仅作配置参考，MNQ 模拟使用 live_simulation_mnq.py 独立脚本
+  - name: mnq_profimr_50k_5m_atr
+    symbol: NQ=F              # yfinance 纳斯达克期货连续合约（需安装 yfinance）
+    fetch_interval: 5m        # 采集周期（5m 或 15m）
+    calc_interval: 5m
+    renko_method: atr
+    renko_params:
+      atr_period: 14
+      atr_multiplier: 1.0     # NQ 波动较大，倍数取 0.5–2.0
+    initial_capital: 50000    # Profimr 50K 账户
+    # MNQ 专属参数（仅 live_simulation_mnq.py 使用）
+    # contract_multiplier: 2.0
+    # max_contracts: 30
+    # margin_per_contract: 1000.0
+    # max_daily_loss: 2000.0
+    # session_start_hour: 22    # UTC 22:10 = 北京时间 06:10（周一–周五）
+    # session_start_minute: 10
+    # session_end_hour: 20      # UTC 20:00 = 北京时间 04:00（次日）
+    # session_end_minute: 0
+    # session_weekdays_only: true
+
+  - name: mnq_profimr_50k_15m_fixed
+    symbol: NQ=F
+    fetch_interval: 15m       # 15 分钟周期（较少噪音，信号更稳）
+    calc_interval: 15m
+    renko_method: fixed
+    renko_params:
+      brick_size: 20.0        # 固定 20 NQ 点 = $40 / 张 MNQ
+    initial_capital: 50000
+
 
 # 可继续添加更多账户配置
